@@ -17,30 +17,11 @@ const INO_ROOT:u64 = 1;
 const INO_PATHES:u64 = 2;
 const INO_TAGS:u64 = 3;
 
-fn make_file_attr(ino: u64) -> FileAttr
-{
-	FileAttr {	
-	    ino: ino,
-	    size: 13,
-	    blocks: 1,
-	    atime: UNIX_EPOCH, // 1970-01-01 00:00:00
-	    mtime: UNIX_EPOCH,
-	    ctime: UNIX_EPOCH,
-	    crtime: UNIX_EPOCH,
-	    kind: FileType::RegularFile,
-	    perm: 0o644,
-	    nlink: 1,
-	    uid: 501,
-	    gid: 20,
-	    rdev: 0,
-	    flags: 0,
-	    blksize: 512,
-	}
-}
 
-
-fn make_dir_attr(ino: u64) -> FileAttr
+fn make_attr(ino: u64, kind: FileType) -> FileAttr
 {
+    let perm = if kind == FileType::Directory {0o755} else {0o644};
+    
 	FileAttr {
 	    ino: ino,
 	    size: 0,
@@ -49,8 +30,8 @@ fn make_dir_attr(ino: u64) -> FileAttr
 	    mtime: UNIX_EPOCH,
 	    ctime: UNIX_EPOCH,
 	    crtime: UNIX_EPOCH,
-	    kind: FileType::Directory,
-	    perm: 0o755,
+	    kind: kind,
+	    perm: perm,
 	    nlink: 2,
 	    uid: 501,
 	    gid: 100,
@@ -76,6 +57,22 @@ fn safe_to_string(osstr: &OsStr) -> String {
 }
 
 
+fn as_file_type(mut mode: u32) -> FileType {
+    mode &= libc::S_IFMT as u32;
+
+    if mode == libc::S_IFREG as u32 {
+        return FileType::RegularFile;
+    } else if mode == libc::S_IFLNK as u32 {
+        return FileType::Symlink;
+    } else if mode == libc::S_IFDIR as u32 {
+        return FileType::Directory;
+    } else {
+        print!("as_file_kind() unknown mode, mode={}", mode);
+        return FileType::RegularFile;
+    }
+}
+
+
 struct FsNode {
 	name: String,
 	is_tag: bool,
@@ -85,18 +82,28 @@ struct FsNode {
 
 
 struct PathTagFs {
-	nodes: HashMap<u64, FsNode>, 
+	nodes: HashMap<u64, FsNode>,
+	next_node: u64, 
 }
 
 
 impl FsNode {
-	fn new(name: String, ino: u64, is_tag: bool) -> FsNode {
-		FsNode { 
+	fn new(name: String, parent_ino: u64, ino: u64, kind: FileType, is_tag: bool) -> FsNode {
+        let mut children = HashMap::new();
+
+        if kind == FileType::Directory {
+            children.insert(".".to_string(), ino);
+            children.insert("..".to_string(), parent_ino);
+        } 
+
+		let node = FsNode { 
 			name: name,
 			is_tag: is_tag,
-			attr: make_dir_attr(ino),
-			children: HashMap::new(), 
-		}		
+			attr: make_attr(ino, kind),
+			children: children, 
+		};
+		
+		return node;		
 	}
 
 	fn add_node(&mut self, node: &FsNode) {
@@ -113,14 +120,15 @@ impl PathTagFs {
 
 	fn new() -> PathTagFs {
 		PathTagFs {
-			nodes: HashMap::new(), 
+			nodes: HashMap::new(),
+			next_node: 4, 
 		}
 	}
 	
 	fn initialize(& mut self) {
-		let mut root = FsNode::new("Root".to_string(), INO_ROOT, false);
-		let pathes = FsNode::new("Pathes".to_string(), INO_PATHES, false);
-		let tags = FsNode::new("Tags".to_string(), INO_TAGS, true);
+		let mut root = FsNode::new("Root".to_string(), INO_ROOT, INO_ROOT, FileType::Directory, false);
+		let pathes = FsNode::new("Pathes".to_string(), INO_ROOT, INO_PATHES, FileType::Directory, false);
+		let tags = FsNode::new("Tags".to_string(), INO_ROOT, INO_TAGS, FileType::Directory, true);
 
 		root.add_node(&pathes);
 		root.add_node(&tags);
@@ -131,6 +139,8 @@ impl PathTagFs {
 		// root is special because it has itself as parent
     	self.nodes.insert(root.attr.ino, root);
 	}
+
+
 }
 
 
@@ -239,6 +249,61 @@ impl Filesystem for PathTagFs {
 		}
     }
     
+   
+    
+	fn mknod(
+        &mut self,
+        _req: &Request,
+        parent_ino: u64,
+        os_name: &OsStr,
+        mode: u32,
+        umask: u32,
+        _rdev: u32,
+        reply: ReplyEntry,
+    ) {
+       println!("mknod() parent={:#x?} name={:?} mode={} umask={:#x?})",
+            parent_ino, os_name, mode, umask
+        );
+
+
+        let file_type = mode & libc::S_IFMT as u32;
+
+        if file_type != libc::S_IFREG as u32
+            && file_type != libc::S_IFLNK as u32
+            && file_type != libc::S_IFDIR as u32
+        {
+            println!("mknod() implementation only supports regular files, symlinks, and directories. Got {:o}", mode);
+            reply.error(libc::ENOSYS);
+            return;
+        }
+
+        let parent_opt = self.nodes.get_mut(&parent_ino);
+
+        match parent_opt {
+            None => {
+                reply.error(ENOENT);
+            }
+            Some(parent) => {
+                let name = safe_to_string(os_name);            
+
+                if parent.children.get(&name) == None {
+                    let ino: u64 = self.next_node;
+                    self.next_node += 1;
+                    
+                    let kind = as_file_type(mode);   
+                    let new_node = FsNode::new(name, parent_ino, ino, kind, parent.is_tag);
+
+                    parent.children.insert(new_node.name.to_string(), ino);     
+                    reply.entry(&Duration::new(0, 0), &new_node.attr, 0);
+                    self.nodes.insert(ino, new_node);
+                }
+                else {
+                    reply.error(libc::EEXIST);
+                }
+            }
+        }
+    }
+    
     
     /// Create a directory.
 	fn mkdir(
@@ -251,7 +316,7 @@ impl Filesystem for PathTagFs {
         reply: ReplyEntry,
     ) {
         println!(
-            "[Not Implemented] mkdir(parent: {:#x?}, name: {:?}, mode: {}, umask: {:#x?})",
+            "mkdir() parent={:#x?} name={:?} mode={} umask={:#x?})",
             parent_ino, os_name, mode, umask
         );
         
@@ -265,8 +330,9 @@ impl Filesystem for PathTagFs {
 				let name = safe_to_string(os_name);
 				
 		        if parent.children.get(&name) == None {
-					let ino: u64 = 4;		
-					let new_node = FsNode::new(name, ino, parent.is_tag);
+					let ino: u64 = self.next_node;
+                    self.next_node += 1;   
+					let new_node = FsNode::new(name, parent_ino, ino, FileType::Directory, parent.is_tag);
 	
 					parent.children.insert(new_node.name.to_string(), ino);		
 					reply.entry(&Duration::new(0, 0), &new_node.attr, 0);
