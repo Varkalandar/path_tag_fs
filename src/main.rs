@@ -13,6 +13,9 @@ const TTL: Duration = Duration::from_secs(1); // 1 second
 
 const TEST_FILE_CONTENT: &str = "Hello World!\n";
 
+const INO_ROOT:u64 = 1;
+const INO_PATHES:u64 = 2;
+const INO_TAGS:u64 = 3;
 
 fn make_file_attr(ino: u64) -> FileAttr
 {
@@ -75,6 +78,7 @@ fn safe_to_string(osstr: &OsStr) -> String {
 
 struct FsNode {
 	name: String,
+	is_tag: bool,
 	attr: FileAttr,
 	children: HashMap<String, u64>,
 }
@@ -86,9 +90,10 @@ struct PathTagFs {
 
 
 impl FsNode {
-	fn new(name: String, ino: u64) -> FsNode {
+	fn new(name: String, ino: u64, is_tag: bool) -> FsNode {
 		FsNode { 
 			name: name,
+			is_tag: is_tag,
 			attr: make_dir_attr(ino),
 			children: HashMap::new(), 
 		}		
@@ -113,9 +118,9 @@ impl PathTagFs {
 	}
 	
 	fn initialize(& mut self) {
-		let mut root = FsNode::new("Root".to_string(), 1);
-		let pathes = FsNode::new("Pathes".to_string(), 2);
-		let tags = FsNode::new("Tags".to_string(), 3);
+		let mut root = FsNode::new("Root".to_string(), INO_ROOT, false);
+		let pathes = FsNode::new("Pathes".to_string(), INO_PATHES, false);
+		let tags = FsNode::new("Tags".to_string(), INO_TAGS, true);
 
 		root.add_node(&pathes);
 		root.add_node(&tags);
@@ -239,17 +244,41 @@ impl Filesystem for PathTagFs {
 	fn mkdir(
         &mut self,
         _req: &Request,
-        parent: u64,
-        name: &OsStr,
+        parent_ino: u64,
+        os_name: &OsStr,
         mode: u32,
         umask: u32,
         reply: ReplyEntry,
     ) {
         println!(
             "[Not Implemented] mkdir(parent: {:#x?}, name: {:?}, mode: {}, umask: {:#x?})",
-            parent, name, mode, umask
+            parent_ino, os_name, mode, umask
         );
-        reply.error(ENOSYS);
+        
+		let parent_opt = self.nodes.get_mut(&parent_ino);
+
+		match parent_opt {
+			None => {
+		        reply.error(ENOENT);
+			}
+			Some(parent) => {
+				let name = safe_to_string(os_name);
+				
+		        if parent.children.get(&name) == None {
+					let ino: u64 = 4;		
+					let new_node = FsNode::new(name, ino, parent.is_tag);
+	
+					parent.children.insert(new_node.name.to_string(), ino);		
+					reply.entry(&Duration::new(0, 0), &new_node.attr, 0);
+					self.nodes.insert(ino, new_node);
+    			}
+				else {
+        		    reply.error(libc::EEXIST);
+				}
+			}
+		}
+
+        // reply.error(ENOSYS);
     }
     
 	fn link(
