@@ -1,17 +1,16 @@
 use clap::{Arg, ArgAction, Command};
 use fuser::{
-    FileAttr, FileType, Filesystem, MountOption, ReplyAttr, ReplyData, ReplyDirectory, ReplyEntry,
-    Request,
+    FileAttr, FileType, Filesystem, MountOption, 
+    ReplyAttr, ReplyData, ReplyDirectory, ReplyEntry, 
+    ReplyOpen, ReplyWrite, Request
 };
-use libc::{ENOENT, ENOSYS};
+use libc::{ENOENT};
 use std::collections::HashMap;
 use std::ffi::OsStr;
+use std::sync::atomic::AtomicU64;
 use std::time::{Duration, UNIX_EPOCH};
 
 const TTL: Duration = Duration::from_secs(1); // 1 second
-
-
-const TEST_FILE_CONTENT: &str = "Hello World!\n";
 
 const INO_ROOT:u64 = 1;
 const INO_PATHES:u64 = 2;
@@ -83,7 +82,8 @@ struct FsNode {
 
 struct PathTagFs {
 	nodes: HashMap<u64, FsNode>,
-	next_node: u64, 
+	next_node: AtomicU64, 
+    next_file_handle: AtomicU64, 
 }
 
 
@@ -121,7 +121,8 @@ impl PathTagFs {
 	fn new() -> PathTagFs {
 		PathTagFs {
 			nodes: HashMap::new(),
-			next_node: 4, 
+			next_node: AtomicU64::new(4), 
+            next_file_handle: AtomicU64::new(1), 
 		}
 	}
 	
@@ -140,7 +141,11 @@ impl PathTagFs {
     	self.nodes.insert(root.attr.ino, root);
 	}
 
-
+    fn take_next(handle: & mut AtomicU64) -> u64
+    {
+        let result = handle.fetch_add(1, std::sync::atomic::Ordering::Relaxed);        
+        return result;
+    }
 }
 
 
@@ -178,27 +183,6 @@ impl Filesystem for PathTagFs {
         match node {
             Some(node) => reply.attr(&TTL, &node.attr),
             None => reply.error(ENOENT),
-        }
-    }
-
-
-    fn read(
-        &mut self,
-        _req: &Request,
-        ino: u64,
-        _fh: u64,
-        offset: i64,
-        _size: u32,
-        _flags: i32,
-        _lock: Option<u64>,
-        reply: ReplyData,
-    ) {
-		println!("read inode={}", ino);
-
-        if ino == 4 {
-            reply.data(&TEST_FILE_CONTENT.as_bytes()[offset as usize..]);
-        } else {
-            reply.error(ENOENT);
         }
     }
 
@@ -261,7 +245,7 @@ impl Filesystem for PathTagFs {
         _rdev: u32,
         reply: ReplyEntry,
     ) {
-       println!("mknod() parent={:#x?} name={:?} mode={} umask={:#x?})",
+       println!("mknod() parent={:#x?} name='{:?}' mode={} umask={:#x?})",
             parent_ino, os_name, mode, umask
         );
 
@@ -287,8 +271,7 @@ impl Filesystem for PathTagFs {
                 let name = safe_to_string(os_name);            
 
                 if parent.children.get(&name) == None {
-                    let ino: u64 = self.next_node;
-                    self.next_node += 1;
+                    let ino: u64 = PathTagFs::take_next(& mut self.next_node);
                     
                     let kind = as_file_type(mode);   
                     let new_node = FsNode::new(name, parent_ino, ino, kind, parent.is_tag);
@@ -316,7 +299,7 @@ impl Filesystem for PathTagFs {
         reply: ReplyEntry,
     ) {
         println!(
-            "mkdir() parent={:#x?} name={:?} mode={} umask={:#x?})",
+            "mkdir() parent={:#x?} name='{:?}' mode={} umask={:#x?})",
             parent_ino, os_name, mode, umask
         );
         
@@ -330,8 +313,7 @@ impl Filesystem for PathTagFs {
 				let name = safe_to_string(os_name);
 				
 		        if parent.children.get(&name) == None {
-					let ino: u64 = self.next_node;
-                    self.next_node += 1;   
+					let ino: u64 = PathTagFs::take_next(& mut self.next_node);
 					let new_node = FsNode::new(name, parent_ino, ino, FileType::Directory, parent.is_tag);
 	
 					parent.children.insert(new_node.name.to_string(), ino);		
@@ -360,6 +342,134 @@ impl Filesystem for PathTagFs {
             inode, new_parent, new_name
         );
     }
+    
+    // file stuff?
+    
+    fn open(&mut self, _req: &Request, inode: u64, flags: i32, reply: ReplyOpen) {
+        println!("open() inode={:?} flags={:b}", inode, flags);
+
+        // access forbidden
+        // reply.error(libc::EACCES);
+
+        let node_opt = self.nodes.get(&inode);
+
+        match node_opt {
+            None => {
+                // invalid value, ist that ok here?
+                reply.error(libc::EINVAL);
+            }
+            Some(_node) => {
+                let handle = PathTagFs::take_next(&mut self.next_file_handle);
+                let open_flags = 0; // ???
+                reply.opened(handle, open_flags);
+            }
+        }
+    }
+
+
+    fn read(
+        &mut self,
+        _req: &Request,
+        inode: u64,
+        handle: u64,
+        offset: i64,
+        size: u32,
+        flags: i32,
+        _lock_owner: Option<u64>,
+        reply: ReplyData,
+    ) {
+        println!(
+            "read() called for inode={:?} handle={} flags={:b} offset={:?} size={:?}",
+            inode, handle, flags, offset, size
+        );
+        assert!(offset >= 0);
+        
+        // if !self.check_file_handle_read(fh) {
+        //    reply.error(libc::EACCES);
+        //    return;
+        // }
+
+        // right now we just assume that all parameters were ok
+        if true {
+            let mut buffer = vec![0; size as usize];
+            // we should fill in some real data here.
+            buffer[0]='H' as u8;
+            buffer[1]='e' as u8;
+            buffer[2]='l' as u8;
+            buffer[3]='l' as u8;
+            buffer[4]='o' as u8;
+            reply.data(&buffer);
+        } else {
+            reply.error(libc::ENOENT);
+        }
+    }
+
+
+    fn write(
+        &mut self,
+        _req: &Request,
+        inode: u64,
+        handle: u64,
+        offset: i64,
+        data: &[u8],
+        _write_flags: u32,
+        #[allow(unused_variables)] flags: i32,
+        _lock_owner: Option<u64>,
+        reply: ReplyWrite,
+    ) {
+        println!("write() called for inode={:?} handle={} flags={:b} size={:?} at offset={}", 
+            inode, handle, flags, data.len(), offset);
+        assert!(offset >= 0);
+        // if !self.check_file_handle_write(fh) {
+        //    reply.error(libc::EACCES);
+        //    return;
+        // }
+
+        // right now we do not write anyways, just framework for later
+        if true {
+            // do not forget offset for writing ...
+            
+            // fake it if we can't make it ...
+            reply.written(data.len() as u32);
+        } else {
+            reply.error(libc::EBADF);
+        }
+    }
+
+    fn truncate(
+        &self,
+        inode: Inode,
+        new_length: u64,
+        uid: u32,
+        gid: u32,
+    ) -> Result<InodeAttributes, c_int> {
+        if new_length > MAX_FILE_SIZE {
+            return Err(libc::EFBIG);
+        }
+
+        let mut attrs = self.get_inode(inode)?;
+
+        if !check_access(attrs.uid, attrs.gid, attrs.mode, uid, gid, libc::W_OK) {
+            return Err(libc::EACCES);
+        }
+
+        let path = self.content_path(inode);
+        let file = OpenOptions::new().write(true).open(path).unwrap();
+        file.set_len(new_length).unwrap();
+
+        attrs.size = new_length;
+        attrs.last_metadata_changed = time_now();
+        attrs.last_modified = time_now();
+
+        // Clear SETUID & SETGID on truncate
+        clear_suid_sgid(&mut attrs);
+
+        self.write_inode(&attrs);
+
+        Ok(attrs)
+    }
+    
+    
 }
 
 
