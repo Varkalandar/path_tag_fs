@@ -1,4 +1,4 @@
-use block_storage::BlockStorage;
+use node_storage::NodeStorage;
 use clap::{Arg, ArgAction, Command};
 use fuser::{
     FileAttr, FileType, Filesystem, KernelConfig, MountOption, ReplyAttr, ReplyBmap, ReplyCreate, ReplyData, ReplyDirectory, ReplyDirectoryPlus, ReplyEmpty, ReplyEntry, ReplyIoctl, ReplyLock, ReplyLseek, ReplyOpen, ReplyStatfs, ReplyWrite, ReplyXattr, Request, TimeOrNow
@@ -11,7 +11,7 @@ use std::path::Path;
 use std::sync::atomic::AtomicU64;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-mod block_storage;
+mod node_storage;
 
 
 const TTL: Duration = Duration::from_secs(1); // 1 second
@@ -94,7 +94,7 @@ struct PathTagFs {
 	nodes: HashMap<u64, FsNode>,
 	next_node: AtomicU64, 
     next_file_handle: AtomicU64,
-    storage: BlockStorage, 
+    storage: NodeStorage, 
 }
 
 
@@ -135,7 +135,7 @@ impl PathTagFs {
 			nodes: HashMap::new(),
 			next_node: AtomicU64::new(4), 
             next_file_handle: AtomicU64::new(1),
-            storage: BlockStorage::new(), 
+            storage: NodeStorage::new(), 
 		}
 	}
 	

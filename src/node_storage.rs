@@ -16,17 +16,17 @@ enum AnyBlock {
     DB(DataBlock),
 }
 
-pub struct BlockStorage {
+pub struct NodeStorage {
 
     // just in memory for now
-    blocks: HashMap<u64, AnyBlock>,
+    nodes: HashMap<u64, AnyBlock>,
     next_block: AtomicU64,
 }
 
-impl BlockStorage {
-    pub fn new() -> BlockStorage {
-        BlockStorage {
-            blocks: HashMap::new(),
+impl NodeStorage {
+    pub fn new() -> NodeStorage {
+        NodeStorage {
+            nodes: HashMap::new(),
             next_block: AtomicU64::new(1),
         }
     }
@@ -40,14 +40,14 @@ impl BlockStorage {
     
         println!("  allocating new index block {}", ib_no);
 
-        self.blocks.insert(ib_no, AnyBlock::IB(ib));
+        self.nodes.insert(ib_no, AnyBlock::IB(ib));
     
         ib_no
     }
     
     fn allocate_data_block_if_needed(&mut self, index_block: u64, data_pos: usize) -> u64 {
         
-        let blocks = & mut self.blocks;
+        let blocks = & mut self.nodes;
         
         let ab = blocks.get_mut(&index_block).unwrap();
 
@@ -80,7 +80,7 @@ impl BlockStorage {
         }
 
         if index_block != 0 {
-            let blocks = & self.blocks;
+            let blocks = & self.nodes;
             let ab = blocks.get(&index_block).unwrap();
     
             if let AnyBlock::IB(ib) = ab {
@@ -144,7 +144,7 @@ impl BlockStorage {
             let data_start = (n - start) * BLOCK_SIZE;
                 
             let db_no = self.allocate_data_block_if_needed(index_block, n);
-            let db_opt = self.blocks.get_mut(&db_no);
+            let db_opt = self.nodes.get_mut(&db_no);
             let ab = db_opt.unwrap();
                 
             if let AnyBlock::DB(db) = ab {
