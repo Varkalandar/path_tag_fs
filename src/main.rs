@@ -1,3 +1,6 @@
+mod node_storage;
+mod block_storage;
+
 use node_storage::NodeStorage;
 use clap::{Arg, ArgAction, Command};
 use fuser::{
@@ -10,9 +13,6 @@ use std::os::raw::c_int;
 use std::path::Path;
 use std::sync::atomic::AtomicU64;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-
-mod node_storage;
-
 
 const TTL: Duration = Duration::from_secs(1); // 1 second
 

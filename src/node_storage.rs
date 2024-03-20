@@ -1,14 +1,10 @@
+
+use crate::block_storage::{DataBlock, BLOCK_SIZE};
 use std::{collections::HashMap, sync::atomic::AtomicU64};
 
-const BLOCK_SIZE:usize = 1024;
-
-
-pub struct DataBlock {
-    data: [u8; BLOCK_SIZE],
-}
 
 pub struct IndexBlock {
-    block: [u64; BLOCK_SIZE/8],
+    block: [u64; (BLOCK_SIZE/8) as usize],
 }
 
 enum AnyBlock {
@@ -35,7 +31,7 @@ impl NodeStorage {
         let ib_no = self.next_block.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     
         let ib = IndexBlock {
-            block: [0; BLOCK_SIZE/8],
+            block: [0; (BLOCK_SIZE/8) as usize],
         };
     
         println!("  allocating new index block {}", ib_no);
@@ -59,7 +55,7 @@ impl NodeStorage {
                 ib.block[data_pos] = db_no;
         
                 let db = DataBlock {
-                    data: [0; BLOCK_SIZE],
+                    data: [0; BLOCK_SIZE as usize],
                 };
                 blocks.insert(db_no, AnyBlock::DB(db));
                 
@@ -86,8 +82,8 @@ impl NodeStorage {
             if let AnyBlock::IB(ib) = ab {
                 if ib.block[0] != 0 {
                     
-                    let start = offset as usize / BLOCK_SIZE;
-                    let end = (offset + size as i64) as usize / BLOCK_SIZE;    
+                    let start = offset as usize / BLOCK_SIZE as usize;
+                    let end = (offset + size as i64) as usize / BLOCK_SIZE as usize;    
     
                     for n in start..=end {
                         let dbno = ib.block[n];
@@ -136,12 +132,12 @@ impl NodeStorage {
 
     fn write_data_blocks(&mut self, index_block: u64, offset: usize, data: &[u8]) {
 
-        let start = offset / BLOCK_SIZE;
-        let end = (offset + data.len()) / BLOCK_SIZE;    
+        let start = offset / BLOCK_SIZE as usize;
+        let end = (offset + data.len()) / BLOCK_SIZE as usize;    
 
         for n in start..=end {
 
-            let data_start = (n - start) * BLOCK_SIZE;
+            let data_start = (n - start) * BLOCK_SIZE as usize;
                 
             let db_no = self.allocate_data_block_if_needed(index_block, n);
             let db_opt = self.nodes.get_mut(&db_no);
@@ -149,7 +145,7 @@ impl NodeStorage {
                 
             if let AnyBlock::DB(db) = ab {
                 
-                let data_size = std::cmp::min(BLOCK_SIZE, data.len() - data_start);
+                let data_size = std::cmp::min(BLOCK_SIZE as usize, data.len() - data_start);
 
                 println!("  writing {} bytes to data block {} chain={}", data_size, db_no, n);
                 
