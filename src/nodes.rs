@@ -1,5 +1,5 @@
 use fuser::{FileAttr, FileType};
-use crate::block_storage::{BlockStorage, DataBlock, BLOCK_SIZE};
+use crate::block_storage::{DataBlock, BLOCK_SIZE};
 
 
 pub struct EntryBlock {
@@ -13,47 +13,31 @@ pub struct EntryBlock {
 }
 
 impl EntryBlock {
-    pub fn new(storage: &mut BlockStorage, name: String, parent_ino: u64, ino: u64, kind: FileType, is_tag: bool) -> EntryBlock {
+    pub fn new(name: String, ino: u64, kind: FileType, is_tag: bool) -> EntryBlock {
 
-        let mut node = EntryBlock { 
+        let node = EntryBlock { 
             name: name,
             is_tag: is_tag,
             attr: make_attr(ino, kind),
             more_data: 0, 
         };
         
-        if kind == FileType::Directory {
-            let dir = &mut node;
-            storage.add_directory_entry(parent_ino, &".".to_string(), ino);            
-            storage.add_directory_entry(parent_ino, &"..".to_string(), parent_ino);            
-        }
-        
         return node;        
     }
-
-    
-    /*
-    pub fn find_child(&self, storage: &mut BlockStorage, name: &String) -> Option<u64> {
-        let mut next = self.more_data;
-        while next != 0 {
-            let option = storage.retrieve_directory_block(next);
-            let db = option.unwrap();
-        
-            if *name == db.entry_name {
-                return Option::Some(db.entry_ino);   
-            }
-        
-            next = db.next;
-        }
-        
-        return None;        
-    }
-    */
 }
 
 
 pub struct IndexBlock {
     pub block: [u64; (BLOCK_SIZE/8) as usize],
+}
+
+impl IndexBlock {
+
+    pub fn new() -> IndexBlock {
+        IndexBlock { 
+            block: [0; (BLOCK_SIZE/8)], 
+        }
+    }
 }
 
 pub struct DirectoryBlock {
@@ -71,14 +55,8 @@ impl DirectoryBlock {
             next: 0 
         }
     }
-/*
-    pub fn add_entry(&mut self, name: &String, ino: u64) {
-        self.entry_name = name.to_string();
-        self.entry_ino =  ino;
-        self.next = 0;
-    }
-*/
 }
+
 
 pub enum AnyBlock {
     EntryBlock(EntryBlock),

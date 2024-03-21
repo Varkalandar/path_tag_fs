@@ -22,6 +22,12 @@ mod tests {
     }
 }
 
+/*
+// debug help
+fn print_type_of<T>(_: &T) {
+    println!("{}", std::any::type_name::<T>())
+}    
+
 fn debug_any_block(ab: &AnyBlock) {
     match ab {
         EntryBlock => {
@@ -38,6 +44,7 @@ fn debug_any_block(ab: &AnyBlock) {
         }
     }
 }
+*/
 
 pub const BLOCK_SIZE:usize = 1024;
 
@@ -61,11 +68,6 @@ impl DataBlock {
 }
 
 impl BlockStorage {
-    
-    // debug help
-    fn print_type_of<T>(_: &T) {
-        println!("{}", std::any::type_name::<T>())
-    }    
     
     pub fn new() -> BlockStorage {
         let mut storage = BlockStorage {
@@ -260,7 +262,7 @@ impl BlockStorage {
                     return Some(eb);
                 }
                 println!("  error {} is no directory block", bno);
-                debug_any_block(ab);                
+                // debug_any_block(ab);                
                 return None;                
             }
         }
@@ -367,28 +369,28 @@ impl BlockStorage {
         if offset < 0 {
             println!("  data offset is negative, cannot write there.");
         }
+
+        let list = self.write_data_blocks(offset as usize, data);
+
+        let ib_no = self.allocate_block() as u64;
+        let mut ib = IndexBlock::new();            
+
+        for i in 0..list.len() {
+            ib.block[i] = list[i];            
+        }
+
+        self.store(ib_no, AnyBlock::IndexBlock(ib));
         
-        let eb_opt = self.blocks.get_mut(&inode);
+        let eb_opt = self.retrieve_entry_block(inode);
+        let eb = eb_opt.unwrap();
         
-        match eb_opt {
-            None => {
-                // error
-            }
-            Some(ab) => {
-                if let AnyBlock::EntryBlock(eb) = ab {
-                let index_block = eb.more_data;
-                    
-                    // self.write_data_blocks(index_block, offset as usize, data);
-                }
-                else {
-                    // error
-                }                
-            }
-        }        
+        eb.more_data = ib_no;
+        eb.attr.size = data.len() as u64;
     }
 
-    /*
-    fn write_data_blocks(&mut self, index_block: u64, offset: usize, data: &[u8]) {
+    
+    fn write_data_blocks(&mut self, offset: usize, data: &[u8]) -> Vec<u64> {
+        let mut result = Vec::new();
 
         let start = offset / BLOCK_SIZE as usize;
         let end = (offset + data.len()) / BLOCK_SIZE as usize;    
@@ -396,56 +398,22 @@ impl BlockStorage {
         for n in start..=end {
 
             let data_start = (n - start) * BLOCK_SIZE as usize;
-                
-            let db_no = self.allocate_data_block_if_needed(index_block, n);
-            let db_opt = self.retrieve_data_block(db_no);
 
-            match db_opt {
-                None => {
-                    println!("  error: block {} is no data block", n);
-                }
-                Some(db) => {
-                    let data_size = std::cmp::min(BLOCK_SIZE as usize, data.len() - data_start);
-    
-                    println!("  writing {} bytes to data block {} chain={}", data_size, db_no, n);
-                    
-                    // db.data.copy_from_slice(src)
-                    db.data[0..data_size].copy_from_slice(&data[data_start..data_start+data_size]);
-                }
-            }
+            let db_no = self.allocate_block() as u64;
+            let mut db = DataBlock::new();
+
+            let data_size = std::cmp::min(BLOCK_SIZE as usize, data.len() - data_start);
+
+            println!("  writing {} bytes to data block {} chain={}", data_size, db_no, n);
+            
+            // db.data.copy_from_slice(src)
+            db.data[0..data_size].copy_from_slice(&data[data_start..data_start+data_size]);
+            result.push(db_no);
+            self.store(db_no, AnyBlock::DataBlock(db));
         }        
         
+        result
     }
-
-  
-    fn allocate_data_block_if_needed(&mut self, index_block: u64, data_pos: usize) -> u64 {
-        
-        let ib_opt = self.retrieve_index_block(index_block);
-        
-        match ib_opt {
-            None => {
-                println!("  error: block {} is no index block", index_block);
-            }
-            Some(ib) => {
-                if ib.block[data_pos] == 0 {
-                    let db_no = self.allocate_block() as u64;
-                    println!("  allocating new data block {}, chain={}", db_no, data_pos);
-                    ib.block[data_pos] = db_no;
-            
-                    let db = DataBlock {
-                        data: [0; BLOCK_SIZE as usize],
-                    };
-                    
-                    self.store(db_no, AnyBlock::DataBlock(db));
-                    
-                    return db_no;
-                }    
-            }
-        }
-
-        0
-    }
-    */
 
 
     pub fn mknod(&mut self, parent_ino: u64, name: &String, kind: FileType) -> Option<FileAttr> {
@@ -470,7 +438,7 @@ impl BlockStorage {
                     let bno = self.allocate_block() as u64;
                     self.add_directory_entry(parent_ino, &name.to_string(), bno);
                     
-                    let entry = EntryBlock::new(self, name.to_string(), parent_ino, bno, kind, false);
+                    let entry = EntryBlock::new(name.to_string(), bno, kind, false);
                     let attr: FileAttr = entry.attr.into();
                     self.store(bno, AnyBlock::EntryBlock(entry));
                     
@@ -505,9 +473,12 @@ impl BlockStorage {
                     let bno = self.allocate_block() as u64;
                     self.add_directory_entry(parent_ino, &name.to_string(), bno);
                     
-                    let entry = EntryBlock::new(self, name.to_string(), parent_ino, bno, fuser::FileType::Directory, false);
+                    let entry = EntryBlock::new(name.to_string(), bno, fuser::FileType::Directory, false);
                     let attr: FileAttr = entry.attr.into();
                     self.store(bno, AnyBlock::EntryBlock(entry));
+                    
+                    self.add_directory_entry(bno, &".".to_string(), bno);            
+                    self.add_directory_entry(bno, &"..".to_string(), parent_ino);            
                     
                     return Some(attr);
                 }
@@ -518,7 +489,7 @@ impl BlockStorage {
     }
     
     
-    pub fn add_directory_entry(&mut self, parent_ino: u64, name: &String, ino: u64) {
+    pub fn add_directory_entry(&mut self, parent_ino: u64, name: &String, ino: u64) -> u64 {
 
         let bno = self.allocate_block() as u64;
         let mut db = DirectoryBlock::new();
@@ -545,7 +516,7 @@ impl BlockStorage {
                     let mut next = parent.more_data;
                     while next != 0 {
                         let option = self.retrieve_directory_block(next);
-                        let mut db = option.unwrap();
+                        let db = option.unwrap();
                         next = db.next;
                         if next == 0 {
                             db.next = bno;
@@ -555,6 +526,7 @@ impl BlockStorage {
             }
         }
 
+        bno
    }
     
 }

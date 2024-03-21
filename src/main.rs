@@ -1,25 +1,22 @@
 mod nodes;
 mod block_storage;
 
-use block_storage::{BlockStorage, DataBlock};
+use block_storage::BlockStorage;
 use nodes::{AnyBlock, EntryBlock};
 use clap::{Arg, ArgAction, Command};
 use fuser::{
-    FileAttr, FileType, Filesystem, KernelConfig, MountOption, ReplyAttr, ReplyBmap, ReplyCreate, ReplyData, ReplyDirectory, ReplyDirectoryPlus, ReplyEmpty, ReplyEntry, ReplyIoctl, ReplyLock, ReplyLseek, ReplyOpen, ReplyStatfs, ReplyWrite, ReplyXattr, Request, TimeOrNow
+    FileType, Filesystem, KernelConfig, MountOption, ReplyAttr, ReplyBmap, ReplyCreate, ReplyData, ReplyDirectory, ReplyDirectoryPlus, ReplyEmpty, ReplyEntry, ReplyIoctl, ReplyLock, ReplyLseek, ReplyOpen, ReplyStatfs, ReplyWrite, ReplyXattr, Request, TimeOrNow
 };
 use libc::{ENOENT, ENOSYS, EPERM};
-use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::os::raw::c_int;
 use std::path::Path;
 use std::sync::atomic::AtomicU64;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime};
 
 const TTL: Duration = Duration::from_secs(1); // 1 second
 
 const INO_ROOT:u64 = 1;
-const INO_PATHES:u64 = 2;
-const INO_TAGS:u64 = 3;
 
 
 fn safe_to_string(osstr: &OsStr) -> String {	
@@ -54,8 +51,8 @@ fn as_file_type(mut mode: u32) -> FileType {
 
 
 struct PathTagFsFuse {
-    reserved: u64,             // We reserve block zero for future use
-    root: u64,                 // root is usually block 1
+    _reserved: u64,             // We reserve block zero for future use
+    _root: u64,                 // root is usually block 1
     next_file_handle: AtomicU64,
     storage: BlockStorage,
 }
@@ -63,11 +60,11 @@ struct PathTagFsFuse {
 impl PathTagFsFuse {
 
 	fn new() -> PathTagFsFuse {
-        let mut storage = BlockStorage::new();
+        let storage = BlockStorage::new();
 
 		PathTagFsFuse {
-            reserved: 0,
-            root: 0,
+            _reserved: 0,
+            _root: 0,
             next_file_handle: AtomicU64::new(1),
             storage: storage,
 		}
@@ -79,20 +76,13 @@ impl PathTagFsFuse {
         // take special blocks
         storage.take_block(0);
         storage.take_block(1);
-        storage.take_block(2);
-        storage.take_block(3);
         
-		let root = EntryBlock::new(storage, "Root".to_string(), INO_ROOT, INO_ROOT, FileType::Directory, false);
-		let pathes = EntryBlock::new(storage, "Pathes".to_string(), INO_ROOT, INO_PATHES, FileType::Directory, false);
-		let tags = EntryBlock::new(storage, "Tags".to_string(), INO_ROOT, INO_TAGS, FileType::Directory, true);
+		let root = EntryBlock::new( "Root".to_string(), INO_ROOT, FileType::Directory, false);
 
         storage.store(INO_ROOT, AnyBlock::EntryBlock(root));
 
-        storage.add_directory_entry(INO_ROOT, &"Pathes".to_string(), INO_PATHES);
-        storage.add_directory_entry(INO_ROOT, &"Tags".to_string(), INO_TAGS);
-
-        storage.store(INO_PATHES, AnyBlock::EntryBlock(pathes));
-        storage.store(INO_TAGS, AnyBlock::EntryBlock(tags));	
+        storage.mkdir(INO_ROOT, &"Pathes".to_string());
+        storage.mkdir(INO_ROOT, &"Tags".to_string());
 	}
 	
 	fn take_next_handle(&mut self) -> u64 {
