@@ -1,5 +1,5 @@
 use fuser::{FileAttr, FileType};
-use crate::block_storage::{DataBlock, BLOCK_SIZE};
+use crate::block_storage::BLOCK_SIZE;
 
 
 pub struct EntryBlock {
@@ -57,6 +57,18 @@ impl DirectoryBlock {
     }
 }
 
+
+pub struct DataBlock {
+    pub data: [u8; BLOCK_SIZE],
+}
+
+impl DataBlock {
+    pub fn new() -> DataBlock {
+        DataBlock {
+            data: [0; BLOCK_SIZE],
+        }
+    }
+}
 
 pub enum AnyBlock {
     EntryBlock(EntryBlock),

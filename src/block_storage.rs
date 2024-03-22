@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use fuser::{FileAttr, FileType};
 
-use crate::nodes::{AnyBlock, DirectoryBlock, EntryBlock, IndexBlock};
+use crate::nodes::{AnyBlock, DirectoryBlock, EntryBlock, IndexBlock, DataBlock};
 
 #[cfg(test)]
 mod tests {
@@ -48,9 +48,6 @@ fn debug_any_block(ab: &AnyBlock) {
 
 pub const BLOCK_SIZE:usize = 1024;
 
-pub struct DataBlock {
-    pub data: [u8; BLOCK_SIZE],
-}
 
 pub struct BlockStorage {
     bitmap: Vec<DataBlock>,
@@ -59,13 +56,6 @@ pub struct BlockStorage {
     blocks: HashMap<u64, AnyBlock>,
 }
 
-impl DataBlock {
-    fn new() -> DataBlock {
-        DataBlock {
-            data: [0; BLOCK_SIZE],
-        }
-    }
-}
 
 impl BlockStorage {
     

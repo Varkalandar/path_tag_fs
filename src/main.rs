@@ -1,5 +1,6 @@
 mod nodes;
 mod block_storage;
+mod block_io;
 
 use block_storage::BlockStorage;
 use nodes::{AnyBlock, EntryBlock};
