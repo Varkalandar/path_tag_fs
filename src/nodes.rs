@@ -1,6 +1,8 @@
 use fuser::{FileAttr, FileType};
 use crate::block_storage::BLOCK_SIZE;
 
+pub const ENTRY_SIZE:usize = 256;
+pub const MAX_ENTRIES:usize = BLOCK_SIZE/ENTRY_SIZE;
 
 pub struct EntryBlock {
     pub name: String,
@@ -40,20 +42,33 @@ impl IndexBlock {
     }
 }
 
+
+pub struct DirectoryEntry {
+    pub ino: u64,
+    pub name: String,
+}
+
+
 pub struct DirectoryBlock {
-    pub entry_name: String,
-    pub entry_ino: u64,
+    pub entries: Vec<DirectoryEntry>,
     pub next: u64,
 }
 
 impl DirectoryBlock {
 
     pub fn new() -> DirectoryBlock {
-        DirectoryBlock { 
-            entry_name: "".to_string(), 
-            entry_ino: 0, 
+        let mut result = DirectoryBlock { 
+            entries: Vec::new(),
             next: 0 
+        };
+        
+        /*
+        for i in 0..BLOCK_SIZE/256 {
+            result.entries.push( DirectoryEntry {ino: 0, name: "".to_string(),} );
         }
+        */
+        
+        result
     }
 }
 

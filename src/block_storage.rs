@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use fuser::{FileAttr, FileType};
 
-use crate::nodes::{AnyBlock, DirectoryBlock, EntryBlock, IndexBlock, DataBlock};
+use crate::nodes::{AnyBlock, DataBlock, DirectoryBlock, DirectoryEntry, EntryBlock, IndexBlock, MAX_ENTRIES};
 
 #[cfg(test)]
 mod tests {
@@ -46,7 +46,7 @@ fn debug_any_block(ab: &AnyBlock) {
 }
 */
 
-pub const BLOCK_SIZE:usize = 1024;
+pub const BLOCK_SIZE:usize = 2048;
 
 
 pub struct BlockStorage {
@@ -159,10 +159,12 @@ impl BlockStorage {
                     let option = self.retrieve_directory_block(next);
                     let db = option.unwrap();
                 
-                    if *name == db.entry_name {
-                        return Option::Some(db.entry_ino);   
+                    for entry in &db.entries {
+                        if *name == entry.name {
+                            return Option::Some(entry.ino);   
+                        }
                     }
-                
+                                    
                     next = db.next;
                 }
             }
@@ -172,7 +174,7 @@ impl BlockStorage {
     }
 
 
-    pub fn list_children(&mut self, parent_ino: u64) -> Vec<(u64, fuser::FileType, String)> {
+    pub fn list_children_names(&mut self, parent_ino: u64) -> Vec<(u64, String)> {
         let mut result = Vec::new();
 
         println!("list_children() listing from inode {}", parent_ino);                
@@ -196,20 +198,11 @@ impl BlockStorage {
                             println!("  error:  {} is no directory block", next);                
                         }
                         Some(db) => {
-                            let name = db.entry_name.to_string();
-                            let ino = db.entry_ino;
-                            next = db.next;
-                            
-                            let inode = self.retrieve_entry_block(ino);
-
-                            match inode {
-                                None => {
-                                    println!("  error:  {} is no entry block",ino);                
-                                }
-                                Some(entry) => {
-                                    let kind = entry.attr.kind;
-                                    result.push((ino, kind, name));                
-                                }
+                            for entry in &db.entries {
+                                let name = entry.name.to_string();
+                                let ino = entry.ino;
+                                result.push((ino, name));                
+                                next = db.next;
                             }
                         }
                     }
@@ -218,6 +211,36 @@ impl BlockStorage {
         }
 
         return result;
+    }
+
+
+    fn find_filetype(&mut self, ino: u64) -> Option<FileType> {
+        println!("find_filetype()  finding type of inode {}", ino);                
+
+        let inode = self.retrieve_entry_block(ino);
+        match inode {
+            None => {
+                println!("  error:  {} is no entry block", ino);                
+            }
+            Some(entry) => {
+                return Some(entry.attr.kind);
+            }
+        }
+        
+        None 
+    }
+
+
+    pub fn list_children(&mut self, parent_ino: u64) -> Vec<(u64, fuser::FileType, String)> {
+        let names = self.list_children_names(parent_ino);
+        let mut result = Vec::new();
+
+        for (ino, name) in names {
+            let kind_opt = self.find_filetype(ino);
+            result.push((ino, kind_opt.unwrap(), name));
+        }
+
+        result    
     }
 
     
@@ -244,14 +267,14 @@ impl BlockStorage {
         
         match abo {
             None => {
-                println!("  error {} is no allocated block", bno);                
+                println!("  error: {} is no allocated block", bno);                
                 return None;                
             }
             Some(ab) => {
                 if let AnyBlock::DirectoryBlock(eb) = ab {
                     return Some(eb);
                 }
-                println!("  error {} is no directory block", bno);
+                println!("  error: {} is no directory block", bno);
                 // debug_any_block(ab);                
                 return None;                
             }
@@ -479,44 +502,92 @@ impl BlockStorage {
     }
     
     
-    pub fn add_directory_entry(&mut self, parent_ino: u64, name: &String, ino: u64) -> u64 {
+    fn extend_directory_chain(&mut self, tail: u64, name: &String, ino: u64) -> u64 {
+
+        println!("extend_directory_chain()  Adding new directory node to chain tail {} for name {} (inode {})", tail, name, ino);
 
         let bno = self.allocate_block() as u64;
         let mut db = DirectoryBlock::new();
-        db.entry_name = name.to_string();
-        db.entry_ino = ino;
-        
-        println!("add_directory_entry()  Adding new directory node {} for entry {} in inode {} from parent inode {}", bno, name, ino, parent_ino);
+        db.entries.push(DirectoryEntry{ino: ino, name: name.to_string(),});
         
         let ab = AnyBlock::DirectoryBlock(db);
         self.store(bno, ab);
 
+        // tail can either be an entry block or an directory block
+        // directory block is more common so we check that first
+        let dir_opt = self.retrieve_directory_block(tail);
+        match dir_opt {
+            None => {
+                // ok, this should be an entry node then ...
+                
+                let entry_opt = self.retrieve_entry_block(tail);
+                let entry = entry_opt.unwrap();
+
+                // add new block here  
+                entry.more_data = bno;
+            }
+            Some(dir) => {
+                // just add new block here  
+                dir.next = bno;
+            }
+        }
+        
+        bno
+    }
+
+    
+    pub fn store_directory_entry(&mut self, parent_ino: u64, name: &String, ino: u64) -> u64 {
+
+        println!("store_directory_entry()  Trying to store new directory entry {} in inode {} from parent inode {}", name, ino, parent_ino);
+        let mut result = 0;
         let parent_opt = self.retrieve_entry_block(parent_ino);
 
         match parent_opt {
             None => {
-                // error
+                println!("  error: block {} is no entry block", parent_ino);
             }
             Some(parent) => {
                 if parent.more_data == 0 {
-                    parent.more_data = bno;
+                    println!("  no directory blocks for inode {}", parent_ino);
+                    result = parent_ino;
                 }
                 else {
-                    // find the end of the chain
+                    // traverse the chain
                     let mut next = parent.more_data;
                     while next != 0 {
                         let option = self.retrieve_directory_block(next);
                         let db = option.unwrap();
-                        next = db.next;
-                        if next == 0 {
-                            db.next = bno;
-                        }
+  
+                        result = next;
+  
+                        //  check if there are free entries
+                        if db.entries.len() < MAX_ENTRIES {
+                            println!("  storing entry in block {}", result);
+                            db.entries.push(DirectoryEntry{ino: ino, name: name.to_string(),});
+                            result = 0;
+                            next = 0;
+                        } else {
+                            // blocks to check
+                            next = db.next;
+                        }  
                     }
                 }
             }
         }
+        
+        result
+    }    
 
-        bno
-   }
-    
+
+    pub fn add_directory_entry(&mut self, parent_ino: u64, name: &String, ino: u64) {
+        println!("store_directory_entry()  Add new directory entry {} in inode {} from parent inode {}", name, ino, parent_ino);
+        
+        // try to store the new entry in one of the existing directrory blocks of this inode 
+        let tail = self.store_directory_entry(parent_ino, name, ino);
+        
+        if tail != 0 {
+            // there were no free entries, but we got the tail of the chain
+            self.extend_directory_chain(tail, name, ino);
+        }
+    }
 }

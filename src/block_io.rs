@@ -1,5 +1,5 @@
 use std::{fs::File, io::{Error, ErrorKind, Read, Seek, Write}};
-use crate::{block_storage::BLOCK_SIZE, nodes::{AnyBlock, DataBlock, DirectoryBlock, EntryBlock, IndexBlock}};
+use crate::{block_storage::BLOCK_SIZE, nodes::{AnyBlock, DataBlock, DirectoryBlock, EntryBlock, IndexBlock, ENTRY_SIZE}};
 
 #[cfg(test)]
 mod tests {
@@ -17,7 +17,7 @@ mod tests {
         
         if let Result::Ok(size) = result {
             println!("size={}", size);
-            assert!(size == 1024);            
+            assert!(size == BLOCK_SIZE);            
         }        
     }
 
@@ -37,7 +37,7 @@ mod tests {
         
         if let Result::Ok(size) = result {
             println!("size={}", size);
-            assert!(size == 1024);            
+            assert!(size == BLOCK_SIZE);            
         }
         
         let ib = bio.read_index_block(0);
@@ -108,6 +108,7 @@ impl BlockIo {
         return result;
     }
 
+
     fn write_index_block(&mut self, b: IndexBlock, no: u64) -> Result<usize, Error> {
         let seek = std::io::SeekFrom::Start(no  * BLOCK_SIZE as u64);
         self.file.seek(seek).unwrap();
@@ -124,16 +125,24 @@ impl BlockIo {
         return result;
     }
 
+
     fn write_directory_block(&mut self, b: DirectoryBlock, no: u64) -> Result<usize, Error> {
         let seek = std::io::SeekFrom::Start(no  * BLOCK_SIZE as u64);
         self.file.seek(seek).unwrap();
 
         let mut data: [u8; BLOCK_SIZE] = [0; BLOCK_SIZE];
-        store(b.entry_ino, &mut data[0..8]);
+        let mut pos = 0;
 
-        let utf8 = b.entry_name.as_bytes();
-        for i in 0..utf8.len() {
-            data[i+8] = utf8[i];
+        for entry in b.entries {
+
+            store(entry.ino, &mut data[pos..pos+8]);
+    
+            let utf8 = entry.name.as_bytes();
+            for i in 0..utf8.len() {
+                data[pos+8+i] = utf8[i];
+            }
+            
+            pos += ENTRY_SIZE;
         }
 
         store(b.next, &mut data[BLOCK_SIZE-8..BLOCK_SIZE]);
