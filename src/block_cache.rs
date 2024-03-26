@@ -1,6 +1,10 @@
+//
+// A write through cache for file system blocks
+//
+
 use std::collections::HashMap;
 use std::io::Error;
-use crate::{block_storage::BLOCK_SIZE, nodes::{AnyBlock, DataBlock, DirectoryBlock, EntryBlock, IndexBlock}};
+use crate::{block_io::BlockIo, block_storage::BLOCK_SIZE, nodes::{AnyBlock, DataBlock, DirectoryBlock, EntryBlock, IndexBlock}};
 
 
 #[cfg(test)]
@@ -9,7 +13,7 @@ mod tests {
 
     #[test]
     fn test_bit_set() {
-        let mut storage = BlockCache::new();
+        let mut storage = BlockCache::new("/tmp/ptfs_test_arena");
         storage.take_block(0);
         storage.take_block(7);
         storage.take_block(8);
@@ -28,24 +32,27 @@ pub struct BlockCache {
     
     // just in memory for now
     blocks: HashMap<u64, AnyBlock>,
+    
+    storage: BlockIo, 
 }
 
 
 impl BlockCache {
 
 
-    pub fn new() -> BlockCache {
-        let mut storage = BlockCache {
+    pub fn new(backingstore: &str) -> BlockCache {
+        let mut cache = BlockCache {
             bitmap: Vec::new(),
             blocks: HashMap::new(),
+            storage: BlockIo::new(backingstore),
         };
         
-        storage.bitmap.push(DataBlock::new());    
-        storage.bitmap.push(DataBlock::new());    
-        storage.bitmap.push(DataBlock::new());    
-        storage.bitmap.push(DataBlock::new());    
+        cache.bitmap.push(DataBlock::new());    
+        cache.bitmap.push(DataBlock::new());    
+        cache.bitmap.push(DataBlock::new());    
+        cache.bitmap.push(DataBlock::new());    
         
-        storage
+        cache
     }
 
     fn calculate_bit_addr(bit_no: usize) -> (usize, usize, usize) {
@@ -105,6 +112,7 @@ impl BlockCache {
         block
     }
     
+    
     pub fn allocate_block(&mut self) -> usize {
         let n = self.find_free_block();
         self.take_block(n);
@@ -114,8 +122,10 @@ impl BlockCache {
     
     pub fn write_block(&mut self, ab: AnyBlock, no: u64) -> Result<usize, Error> {
 
+        let result = self.storage.write_block(&ab, no);
         self.blocks.insert(no, ab);
-        return Ok(0);
+        
+        return result;
     }
     
     
@@ -134,6 +144,7 @@ impl BlockCache {
             }
         }
     }
+
 
     pub fn retrieve_directory_block(&mut self, bno: u64) -> Option<&mut DirectoryBlock> {
         let abo = self.blocks.get_mut(&bno);
@@ -156,6 +167,7 @@ impl BlockCache {
         }
     }
 
+
     pub fn retrieve_index_block(&mut self, bno: u64) -> Option<&mut IndexBlock> {
         let abo = self.blocks.get_mut(&bno);
         
@@ -171,6 +183,7 @@ impl BlockCache {
             }
         }
     }
+
 
     pub fn retrieve_data_block(&mut self, bno: u64) -> Option<&mut DataBlock> {
         let abo = self.blocks.get_mut(&bno);

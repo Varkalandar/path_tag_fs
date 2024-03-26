@@ -1,4 +1,6 @@
-use std::{fs::File, io::{Error, ErrorKind, Read, Seek, Write}};
+use std::{fs::File, io::{Error, ErrorKind, Read, Seek, Write}, time::SystemTime};
+use fuser::FileType;
+
 use crate::{block_storage::BLOCK_SIZE, nodes::{AnyBlock, DataBlock, DirectoryBlock, EntryBlock, IndexBlock, ENTRY_SIZE}};
 
 #[cfg(test)]
@@ -11,7 +13,7 @@ mod tests {
         let b = DataBlock::new();
         let ab = AnyBlock::DataBlock(b);
         
-        let result = bio.write_block(ab, 0);
+        let result = bio.write_block(&ab, 0);
 
         assert!(result.is_ok());
         
@@ -30,7 +32,7 @@ mod tests {
         
         
         let ab = AnyBlock::IndexBlock(b);        
-        let result = bio.write_block(ab, 0);
+        let result = bio.write_block(&ab, 0);
 
         println!("result={:?}", result);
         assert!(result.is_ok());
@@ -49,6 +51,25 @@ mod tests {
     }
 }
 
+
+fn store_time(time: SystemTime, storage: &mut[u8]) {
+    match time.duration_since(SystemTime::UNIX_EPOCH) {
+        Ok(n) => store(n.as_millis() as u64, storage),
+        Err(_) => panic!("SystemTime before UNIX EPOCH!"),
+    }
+}
+
+
+fn store_32(value: u32, storage: &mut[u8]) {
+    let bytes = u32::to_le_bytes(value);
+
+    storage[0] = bytes[0];
+    storage[1] = bytes[1];
+    storage[2] = bytes[2];
+    storage[3] = bytes[3];
+}
+
+
 fn store(value: u64, storage: &mut[u8]) {
     let bytes = u64::to_le_bytes(value);
 
@@ -62,11 +83,32 @@ fn store(value: u64, storage: &mut[u8]) {
     storage[7] = bytes[7];
 }
 
+
+fn kind_to_u8(kind: FileType) -> u8 {
+    match kind {
+        // Named pipe (S_IFIFO)
+        FileType::NamedPipe => 1,
+        // Character device (S_IFCHR)
+        FileType::CharDevice => 2,
+        // Block device (S_IFBLK)
+        FileType::BlockDevice => 3,
+        // Directory (S_IFDIR)
+        FileType::Directory=> 4,
+        // Regular file (S_IFREG)
+        FileType::RegularFile => 5,
+        // Symbolic link (S_IFLNK)
+        FileType::Symlink => 6,
+        // Unix domain socket (S_IFSOCK)
+        FileType::Socket => 7,        
+    }
+}
+
+
 fn to_u64(data: [u8;8]) -> u64 {
     u64::from_le_bytes(data)
 }
 
-struct BlockIo {
+pub struct BlockIo {
     file: File,
 }
 
@@ -81,7 +123,7 @@ impl BlockIo {
     }
 
     
-    pub fn write_block(&mut self, ab: AnyBlock, no: u64) -> Result<usize, Error> {
+    pub fn write_block(&mut self, ab: &AnyBlock, no: u64) -> Result<usize, Error> {
         let size;
         
         match ab {
@@ -101,15 +143,42 @@ impl BlockIo {
         return size;
     }
     
-    fn write_entry_block(&mut self, b: EntryBlock, no: u64) -> Result<usize, Error> {
+    
+    fn write_entry_block(&mut self, b: &EntryBlock, no: u64) -> Result<usize, Error> {
         let seek = std::io::SeekFrom::Start(no  * BLOCK_SIZE as u64);
         self.file.seek(seek).unwrap();
-        let result: Result<usize, Error> = Result::Err(Error::new(ErrorKind::Other, "Not implemented"));
-        return result;
+        
+        let mut data: [u8; BLOCK_SIZE] = [0; BLOCK_SIZE];
+        let mut header = &mut data[0..8];        
+        header.write("PTFEntry".as_bytes());
+        
+        let attrs = &b.attr;
+        
+        store(attrs.ino, &mut data[8..16]);
+        store(attrs.size, &mut data[8..16]);
+        store(attrs.blocks, &mut data[16..24]);
+        store_time(attrs.atime, &mut data[24..32]);
+        store_time(attrs.mtime, &mut data[32..40]);
+        store_time(attrs.ctime, &mut data[40..48]);
+        store_time(attrs.crtime, &mut data[48..56]);
+        store_32(attrs.perm as u32, &mut data[56..60]);
+        store_32(attrs.nlink, &mut data[60..64]);
+        store_32(attrs.uid, &mut data[64..68]);
+        store_32(attrs.gid, &mut data[68..72]);
+        store_32(attrs.rdev, &mut data[72..76]);
+        store_32(attrs.blksize, &mut data[76..80]);
+        store_32(attrs.flags, &mut data[80..84]);
+
+        // single bytes at the end
+        data[84] = kind_to_u8(attrs.kind);
+        data[85] = if b.is_tag {1} else {0};
+        
+        let result = self.file.write(&data);
+        result
     }
 
 
-    fn write_index_block(&mut self, b: IndexBlock, no: u64) -> Result<usize, Error> {
+    fn write_index_block(&mut self, b: &IndexBlock, no: u64) -> Result<usize, Error> {
         let seek = std::io::SeekFrom::Start(no  * BLOCK_SIZE as u64);
         self.file.seek(seek).unwrap();
 
@@ -126,14 +195,14 @@ impl BlockIo {
     }
 
 
-    fn write_directory_block(&mut self, b: DirectoryBlock, no: u64) -> Result<usize, Error> {
+    fn write_directory_block(&mut self, b: &DirectoryBlock, no: u64) -> Result<usize, Error> {
         let seek = std::io::SeekFrom::Start(no  * BLOCK_SIZE as u64);
         self.file.seek(seek).unwrap();
 
         let mut data: [u8; BLOCK_SIZE] = [0; BLOCK_SIZE];
         let mut pos = 0;
 
-        for entry in b.entries {
+        for entry in &b.entries {
 
             store(entry.ino, &mut data[pos..pos+8]);
     
@@ -153,7 +222,8 @@ impl BlockIo {
         return result;
     }
 
-    fn write_data_block(&mut self, b: DataBlock, no: u64) -> Result<usize, Error> {
+
+    fn write_data_block(&mut self, b: &DataBlock, no: u64) -> Result<usize, Error> {
         let seek = std::io::SeekFrom::Start(no  * BLOCK_SIZE as u64);
         self.file.seek(seek).unwrap();
 
@@ -161,6 +231,7 @@ impl BlockIo {
         println!("write_data_block() {:?} bytes written", size);
         return size;
     }
+
     
     fn read_index_block(&mut self, no: u64) -> IndexBlock {
         let seek = std::io::SeekFrom::Start(no  * BLOCK_SIZE as u64);

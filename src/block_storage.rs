@@ -38,9 +38,9 @@ pub struct BlockStorage {
 
 impl BlockStorage {
     
-    pub fn new() -> BlockStorage {
+    pub fn new(backingstore: &str) -> BlockStorage {
         BlockStorage {
-            cache: BlockCache::new(),
+            cache: BlockCache::new(backingstore),
         }
     }
     

@@ -62,7 +62,7 @@ struct PathTagFsFuse {
 impl PathTagFsFuse {
 
 	fn new() -> PathTagFsFuse {
-        let storage = BlockStorage::new();
+        let storage = BlockStorage::new("/tmp/ptfs_storage");
 
 		PathTagFsFuse {
             _reserved: 0,
