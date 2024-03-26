@@ -1,5 +1,6 @@
 mod nodes;
 mod block_storage;
+mod block_cache;
 mod block_io;
 
 use block_storage::BlockStorage;
@@ -71,26 +72,16 @@ impl PathTagFsFuse {
 		}
 	}
 	
+	
 	fn initialize(& mut self) {
-        
-        let storage = &mut self.storage; 
-        // take special blocks
-        storage.take_block(0);
-        storage.take_block(1);
-        
-		let root = EntryBlock::new( "Root".to_string(), INO_ROOT, FileType::Directory, false);
-
-        storage.store(INO_ROOT, AnyBlock::EntryBlock(root));
-
-        storage.mkdir(INO_ROOT, &"Pathes".to_string());
-        storage.mkdir(INO_ROOT, &"Tags".to_string());
+        self.storage.initialize(INO_ROOT);; 
 	}
+	
 	
 	fn take_next_handle(&mut self) -> u64 {
         let fh = self.next_file_handle.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         return fh;
     }
-
 }
 
 
@@ -115,7 +106,7 @@ impl Filesystem for PathTagFsFuse {
     fn lookup(&mut self, _req: &Request, parent_ino: u64, os_fname: &OsStr, reply: ReplyEntry) {
 				
 		let fname = safe_to_string(os_fname); 		
-		println!("lookup name={} parent={}", fname, parent_ino);
+		println!("lookup() name={} parent={}", fname, parent_ino);
 		
         let ino: Option<u64> = self.storage.find_child(parent_ino, &fname); 
 		match ino {
@@ -130,7 +121,7 @@ impl Filesystem for PathTagFsFuse {
 
     /// Get file attributes.
     fn getattr(&mut self, _req: &Request, ino: u64, reply: ReplyAttr) {
-		println!("getattr inode={}", ino);
+		println!("getattr() inode={}", ino);
 
         let node_opt = self.storage.retrieve_entry_block(ino);
 
@@ -161,8 +152,8 @@ impl Filesystem for PathTagFsFuse {
         reply: ReplyAttr,
     ) {
         println!(
-            "setattr(ino: {:#x?}, mode: {:?}, uid: {:?}, \
-            gid: {:?}, size: {:?}, fh: {:?}, flags: {:?})",
+            "setattr() ino={:#x?} mode={:?} uid={:?} \
+            gid={:?} size={:?}, fh={:?} flags={:?}",
             ino, mode, uid, gid, size, fh, flags
         );
         
