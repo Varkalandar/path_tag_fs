@@ -86,6 +86,7 @@ impl BlockCache {
         (data[bit_addr.1] & (1 << bit_addr.2)) > 0
     }
     
+    
     pub fn find_free_block(&self) -> usize {
         let bm_blocks = self.bitmap.len();
         let block = 0;
@@ -129,75 +130,132 @@ impl BlockCache {
     }
     
     
-    pub fn retrieve_entry_block(&mut self, bno: u64) -> Option<&mut EntryBlock> {
-        let abo = self.blocks.get_mut(&bno);
+    fn check_cache(&mut self, bno: u64) -> bool {
+        let abo = self.blocks.get(&bno);
         
         match abo {
             None => {
-                return None;                
+                return false;
             }
-            Some(ab) => {
-                if let AnyBlock::EntryBlock(eb) = ab {
-                    return Some(eb);
-                }
-                return None;                
+            Some(_ab) => {
+                return true;
             }
         }
+    }
+    
+    
+    pub fn retrieve_entry_block(&mut self, bno: u64) -> Option<&mut EntryBlock> {
+        println!("retrieve_entry_block() block={}", bno);                
+
+        let in_cache = self.check_cache(bno);
+        let mut result = None;
+         
+        if in_cache {
+            let ab_opt = self.blocks.get_mut(&bno);
+            
+            match ab_opt {
+                None => {}
+                Some(ab) => {
+                    if let AnyBlock::EntryBlock(eb) = ab {
+                        result = Some(eb);
+                    }
+                }
+            }
+        }
+        else {
+            let eb = self.storage.read_entry_block(bno);
+            self.blocks.insert(bno, AnyBlock::EntryBlock(eb));
+
+            result = self.retrieve_entry_block(bno);
+        }
+
+        result
     }
 
 
     pub fn retrieve_directory_block(&mut self, bno: u64) -> Option<&mut DirectoryBlock> {
-        let abo = self.blocks.get_mut(&bno);
-
         println!("retrieve_directory_block() block={}", bno);                
         
-        match abo {
-            None => {
-                println!("  error: {} is no allocated block", bno);                
-                return None;                
-            }
-            Some(ab) => {
-                if let AnyBlock::DirectoryBlock(eb) = ab {
-                    return Some(eb);
+        let in_cache = self.check_cache(bno);
+        let mut result = None;
+         
+        if in_cache {
+            let ab_opt = self.blocks.get_mut(&bno);
+            
+            match ab_opt {
+                None => {}
+                Some(ab) => {
+                    if let AnyBlock::DirectoryBlock(eb) = ab {
+                        result = Some(eb);
+                    }
                 }
-                println!("  error: {} is no directory block", bno);
-                // debug_any_block(ab);                
-                return None;                
             }
         }
+        else {
+            let db = self.storage.read_directory_block(bno);
+            self.blocks.insert(bno, AnyBlock::DirectoryBlock(db));
+
+            result = self.retrieve_directory_block(bno);
+        }
+
+        result
     }
 
 
     pub fn retrieve_index_block(&mut self, bno: u64) -> Option<&mut IndexBlock> {
-        let abo = self.blocks.get_mut(&bno);
+        println!("retrieve_index_block() block={}", bno);                
         
-        match abo {
-            None => {
-                return None;                
-            }
-            Some(ab) => {
-                if let AnyBlock::IndexBlock(eb) = ab {
-                    return Some(eb);
+        let in_cache = self.check_cache(bno);
+        let mut result = None;
+         
+        if in_cache {
+            let ab_opt = self.blocks.get_mut(&bno);
+            
+            match ab_opt {
+                None => {}
+                Some(ab) => {
+                    if let AnyBlock::IndexBlock(eb) = ab {
+                        result = Some(eb);
+                    }
                 }
-                return None;                
             }
         }
+        else {
+            let db = self.storage.read_index_block(bno);
+            self.blocks.insert(bno, AnyBlock::IndexBlock(db));
+
+            result = self.retrieve_index_block(bno);
+        }
+
+        result
     }
 
 
     pub fn retrieve_data_block(&mut self, bno: u64) -> Option<&mut DataBlock> {
-        let abo = self.blocks.get_mut(&bno);
+        println!("retrieve_index_block() block={}", bno);                
         
-        match abo {
-            None => {
-                return None;                
-            }
-            Some(ab) => {
-                if let AnyBlock::DataBlock(eb) = ab {
-                    return Some(eb);
+        let in_cache = self.check_cache(bno);
+        let mut result = None;
+         
+        if in_cache {
+            let ab_opt = self.blocks.get_mut(&bno);
+            
+            match ab_opt {
+                None => {}
+                Some(ab) => {
+                    if let AnyBlock::DataBlock(eb) = ab {
+                        result = Some(eb);
+                    }
                 }
-                return None;                
             }
         }
-    }
+        else {
+            let db = self.storage.read_data_block(bno);
+            self.blocks.insert(bno, AnyBlock::DataBlock(db));
+
+            result = self.retrieve_data_block(bno);
+        }
+
+        result
+   }
 }

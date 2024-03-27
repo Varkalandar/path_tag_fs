@@ -74,7 +74,7 @@ impl PathTagFsFuse {
 	
 	
 	fn initialize(& mut self) {
-        self.fs.initialize(INO_ROOT);; 
+        self.fs.initialize(INO_ROOT);
 	}
 	
 	

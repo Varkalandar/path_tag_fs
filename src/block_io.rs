@@ -1,4 +1,4 @@
-use std::{fs::File, io::{Error, ErrorKind, Read, Seek, Write}, time::{Duration, SystemTime, UNIX_EPOCH}};
+use std::{fs::{remove_file, File}, io::{Error, ErrorKind, Read, Seek, Write}, time::{Duration, SystemTime, UNIX_EPOCH}};
 use fuser::FileType;
 
 use crate::{path_tag_fs::BLOCK_SIZE, nodes::{AnyBlock, DataBlock, DirectoryBlock, EntryBlock, IndexBlock, ENTRY_SIZE}};
@@ -196,6 +196,13 @@ pub struct BlockIo {
 impl BlockIo {
 
     pub fn new(path: &str) -> BlockIo {
+        
+        // later we must split file system creation from opening.
+        // currently the initialize() method clashes with old data
+        let r = remove_file(path);
+        
+        println!("Removing old storage, status: {:?}", r);
+        
         let file = File::options().read(true).write(true).create(true).open(path);
 
         BlockIo {
@@ -317,7 +324,7 @@ impl BlockIo {
     }
 
     
-    fn read_entry_block(&mut self, no: u64) -> EntryBlock {
+    pub fn read_entry_block(&mut self, no: u64) -> EntryBlock {
         let seek = std::io::SeekFrom::Start(no  * BLOCK_SIZE as u64);
         self.file.seek(seek).unwrap();
         
@@ -352,7 +359,7 @@ impl BlockIo {
     }
 
 
-    fn read_index_block(&mut self, no: u64) -> IndexBlock {
+    pub fn read_index_block(&mut self, no: u64) -> IndexBlock {
         let seek = std::io::SeekFrom::Start(no  * BLOCK_SIZE as u64);
         let ok = self.file.seek(seek);
         
@@ -375,4 +382,39 @@ impl BlockIo {
         return ib;
     }
 
+
+    pub fn read_directory_block(&mut self, no: u64) -> DirectoryBlock {
+        let seek = std::io::SeekFrom::Start(no  * BLOCK_SIZE as u64);
+        self.file.seek(seek).unwrap();
+
+        let mut db = DirectoryBlock::new();
+        let mut data: [u8; BLOCK_SIZE] = [0; BLOCK_SIZE];
+        let _ = self.file.read(&mut data);        
+        let mut pos = 0;
+        
+        for entry in &mut db.entries {
+
+            entry.ino = to_u64(&data[pos..pos+8]);
+    
+            let vec = Vec::from(&data[pos+8..pos+ENTRY_SIZE]);
+            entry.name = String::from_utf8(vec).unwrap();
+            
+            pos += ENTRY_SIZE;
+        }
+
+        db.next = to_u64(&data[BLOCK_SIZE-8..BLOCK_SIZE]);
+
+        db
+    }
+
+
+    pub fn read_data_block(&mut self, no: u64) -> DataBlock {
+        let seek = std::io::SeekFrom::Start(no  * BLOCK_SIZE as u64);
+        self.file.seek(seek).unwrap();
+
+        let mut db = DataBlock::new();
+        let _ = self.file.read(&mut db.data);        
+
+        db
+    }
 }
