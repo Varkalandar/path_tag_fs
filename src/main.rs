@@ -1,9 +1,9 @@
 mod nodes;
-mod block_storage;
+mod path_tag_fs;
 mod block_cache;
 mod block_io;
 
-use block_storage::BlockStorage;
+use path_tag_fs::PathTagFs;
 use nodes::{AnyBlock, EntryBlock};
 use clap::{Arg, ArgAction, Command};
 use fuser::{
@@ -56,25 +56,25 @@ struct PathTagFsFuse {
     _reserved: u64,             // We reserve block zero for future use
     _root: u64,                 // root is usually block 1
     next_file_handle: AtomicU64,
-    storage: BlockStorage,
+    fs: PathTagFs,
 }
 
 impl PathTagFsFuse {
 
 	fn new() -> PathTagFsFuse {
-        let storage = BlockStorage::new("/tmp/ptfs_storage");
+        let fs = PathTagFs::new("/tmp/ptfs_storage");
 
 		PathTagFsFuse {
             _reserved: 0,
             _root: 0,
             next_file_handle: AtomicU64::new(1),
-            storage: storage,
+            fs: fs,
 		}
 	}
 	
 	
 	fn initialize(& mut self) {
-        self.storage.initialize(INO_ROOT);; 
+        self.fs.initialize(INO_ROOT);; 
 	}
 	
 	
@@ -108,11 +108,11 @@ impl Filesystem for PathTagFsFuse {
 		let fname = safe_to_string(os_fname); 		
 		println!("lookup() name={} parent={}", fname, parent_ino);
 		
-        let ino: Option<u64> = self.storage.find_child(parent_ino, &fname); 
+        let ino: Option<u64> = self.fs.find_child(parent_ino, &fname); 
 		match ino {
 			None => reply.error(ENOENT),
 			Some(ino) => {
-				let node = self.storage.retrieve_entry_block(ino).unwrap();
+				let node = self.fs.retrieve_entry_block(ino).unwrap();
 				reply.entry(&TTL, &node.attr, 0);
 			}
 		}
@@ -123,7 +123,7 @@ impl Filesystem for PathTagFsFuse {
     fn getattr(&mut self, _req: &Request, ino: u64, reply: ReplyAttr) {
 		println!("getattr() inode={}", ino);
 
-        let node_opt = self.storage.retrieve_entry_block(ino);
+        let node_opt = self.fs.retrieve_entry_block(ino);
 
         match node_opt {
             Some(node) => reply.attr(&TTL, &node.attr),
@@ -157,7 +157,7 @@ impl Filesystem for PathTagFsFuse {
             ino, mode, uid, gid, size, fh, flags
         );
         
-        let node_opt = self.storage.retrieve_entry_block(ino);
+        let node_opt = self.fs.retrieve_entry_block(ino);
         
         match node_opt {
             None => {
@@ -212,13 +212,13 @@ impl Filesystem for PathTagFsFuse {
         }
 
         let name = safe_to_string(os_name);            
-        if self.storage.find_child(parent_ino, &name) != None {
+        if self.fs.find_child(parent_ino, &name) != None {
             reply.error(libc::EEXIST);
             return;
         }
 
 
-        let parent_opt = self.storage.retrieve_entry_block(parent_ino);
+        let parent_opt = self.fs.retrieve_entry_block(parent_ino);
 
         match parent_opt {
             None => {
@@ -227,7 +227,7 @@ impl Filesystem for PathTagFsFuse {
             Some(_parent) => {
 
                 let kind = as_file_type(mode);   
-                let attrs = self.storage.mknod(parent_ino, &name, kind);
+                let attrs = self.fs.mknod(parent_ino, &name, kind);
         
                 match attrs {
                     None => {
@@ -256,7 +256,7 @@ impl Filesystem for PathTagFsFuse {
             parent_ino, os_name, mode, umask
         );
 
-        let storage = &mut self.storage;
+        let storage = &mut self.fs;
         let name = safe_to_string(os_name);
         if storage.find_child(parent_ino, &name) != None {
             reply.error(libc::EEXIST);
@@ -392,7 +392,7 @@ impl Filesystem for PathTagFsFuse {
         // access forbidden
         // reply.error(libc::EACCES);
 
-        let node_opt = self.storage.retrieve_entry_block(inode);
+        let node_opt = self.fs.retrieve_entry_block(inode);
 
         match node_opt {
             None => {
@@ -442,10 +442,10 @@ impl Filesystem for PathTagFsFuse {
 
         // right now we just assume that all parameters were ok
         if true {
-            let node = self.storage.retrieve_entry_block(inode).unwrap();
+            let node = self.fs.retrieve_entry_block(inode).unwrap();
             let size = std::cmp::min(req_size as u64, node.attr.size);
             let more_data = node.more_data;
-            let buffer = self.storage.read(more_data, offset, size);
+            let buffer = self.fs.read(more_data, offset, size);
 
             reply.data(&buffer);
         } else {
@@ -490,7 +490,7 @@ impl Filesystem for PathTagFsFuse {
         if true {
             println!("  setting file size to {}", data.len());
             
-            let storage = &mut self.storage;
+            let storage = &mut self.fs;
             storage.write(inode, offset, data);            
 
             // fake it if we can't make it ...
@@ -583,14 +583,14 @@ impl Filesystem for PathTagFsFuse {
     ) {
         println!("readdir directory_inode={} offset={}", ino, offset);
 
-        let eb_opt = self.storage.retrieve_entry_block(ino); 
+        let eb_opt = self.fs.retrieve_entry_block(ino); 
         
         match eb_opt {
             None => { 
                 reply.error(ENOENT)
             }
             Some(_eb) => {
-                let entries = self.storage.list_children(ino);
+                let entries = self.fs.list_children(ino);
                 let mut i = 0;
                                 
                 for (ino, kind, name) in entries {                    

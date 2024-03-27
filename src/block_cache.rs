@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 use std::io::Error;
-use crate::{block_io::BlockIo, block_storage::BLOCK_SIZE, nodes::{AnyBlock, DataBlock, DirectoryBlock, EntryBlock, IndexBlock}};
+use crate::{block_io::BlockIo, path_tag_fs::BLOCK_SIZE, nodes::{AnyBlock, DataBlock, DirectoryBlock, EntryBlock, IndexBlock}};
 
 
 #[cfg(test)]

@@ -1,5 +1,5 @@
 use fuser::{FileAttr, FileType};
-use crate::block_storage::BLOCK_SIZE;
+use crate::path_tag_fs::BLOCK_SIZE;
 
 pub const ENTRY_SIZE:usize = 256;
 pub const MAX_ENTRIES:usize = BLOCK_SIZE/ENTRY_SIZE;
@@ -15,10 +15,10 @@ pub struct EntryBlock {
 }
 
 impl EntryBlock {
-    pub fn new(name: String, ino: u64, kind: FileType, is_tag: bool) -> EntryBlock {
+    pub fn new(name: &str, ino: u64, kind: FileType, is_tag: bool) -> EntryBlock {
 
         let node = EntryBlock { 
-            name: name,
+            name: name.to_string(),
             is_tag: is_tag,
             attr: make_attr(ino, kind),
             more_data: 0, 
@@ -30,14 +30,17 @@ impl EntryBlock {
 
 
 pub struct IndexBlock {
-    pub block: [u64; (BLOCK_SIZE/8) as usize],
+    pub block: [u64; (BLOCK_SIZE/8) - 1],
+    pub next: u64,
 }
+
 
 impl IndexBlock {
 
     pub fn new() -> IndexBlock {
         IndexBlock { 
-            block: [0; (BLOCK_SIZE/8)], 
+            block: [0; (BLOCK_SIZE/8) - 1],
+            next: 0, 
         }
     }
 }

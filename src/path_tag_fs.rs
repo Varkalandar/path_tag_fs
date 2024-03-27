@@ -31,15 +31,15 @@ fn debug_any_block(ab: &AnyBlock) {
 
 pub const BLOCK_SIZE:usize = 2048;
 
-pub struct BlockStorage {
+pub struct PathTagFs {
     cache: BlockCache,
 }
 
 
-impl BlockStorage {
+impl PathTagFs {
     
-    pub fn new(backingstore: &str) -> BlockStorage {
-        BlockStorage {
+    pub fn new(backingstore: &str) -> PathTagFs {
+        PathTagFs {
             cache: BlockCache::new(backingstore),
         }
     }
@@ -51,7 +51,7 @@ impl BlockStorage {
         self.cache.take_block(0);
         self.cache.take_block(1);
         
-        let root = EntryBlock::new( "Root".to_string(), ino_root, FileType::Directory, false);
+        let root = EntryBlock::new("Root", ino_root, FileType::Directory, false);
 
         self.cache.write_block(AnyBlock::EntryBlock(root), ino_root);
 
@@ -192,8 +192,8 @@ impl BlockStorage {
                 Some(ib) => {
                     if ib.block[0] != 0 {
                         
-                        let start = offset as usize / BLOCK_SIZE as usize;
-                        let end = (offset + size as i64) as usize / BLOCK_SIZE as usize;    
+                        let start = offset as usize / BLOCK_SIZE;
+                        let end = (offset + size as i64) as usize / BLOCK_SIZE;    
         
                         for n in start..=end {
                             let dbno = ib.block[n];
@@ -203,7 +203,7 @@ impl BlockStorage {
                     else {
                         println!("  error: No data blocks for file.");                
                     }
-                    ib_no = ib.block[ib.block.len() - 1];
+                    ib_no = ib.next;
                 }
             }
         }
@@ -292,7 +292,7 @@ impl BlockStorage {
                 let bno = self.cache.allocate_block() as u64;
                 self.add_directory_entry(parent_ino, &name.to_string(), bno);
                 
-                let entry = EntryBlock::new(name.to_string(), bno, kind, false);
+                let entry = EntryBlock::new(&name, bno, kind, false);
                 let attr: FileAttr = entry.attr.into();
                 self.cache.write_block(AnyBlock::EntryBlock(entry), bno);
                 
@@ -317,7 +317,7 @@ impl BlockStorage {
                 let bno = self.cache.allocate_block() as u64;
                 self.add_directory_entry(parent_ino, &name.to_string(), bno);
                 
-                let entry = EntryBlock::new(name.to_string(), bno, fuser::FileType::Directory, false);
+                let entry = EntryBlock::new(&name, bno, fuser::FileType::Directory, false);
                 let attr: FileAttr = entry.attr.into();
                 self.cache.write_block(AnyBlock::EntryBlock(entry), bno);
                 
