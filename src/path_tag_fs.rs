@@ -31,6 +31,29 @@ fn debug_any_block(ab: &AnyBlock) {
 
 pub const BLOCK_SIZE:usize = 2048;
 
+
+fn comp(one: &String, two: &String) -> bool {
+    let b1 = one.as_bytes();
+    let b2 = two.as_bytes();
+    
+    if b1.len() != b2.len() {
+        println!("Difference in length {} != {}", b1.len(), b2.len());
+        return false;
+    }
+    
+    
+    for i in 0..b2.len() {
+        if b1[i] != b2[i] {
+            println!("Difference at index {} -> {} != {}", i, b1[i], b2[i]);
+            return false;
+        }
+    }
+    
+    true
+}
+        
+
+
 pub struct PathTagFs {
     cache: BlockCache,
 }
@@ -45,11 +68,25 @@ impl PathTagFs {
     }
     
     
-    pub fn initialize(& mut self, ino_root: u64) {
+    pub fn open(& mut self, ino_root: u64) {
+        self.cache.open();
+        self.list_fs(ino_root);
+    }
+    
+
+    pub fn destroy(& mut self) {
+        self.cache.flush();
+    }
+
+    
+    pub fn mkfs(& mut self, ino_root: u64, size: u64) {
         
-        // take special blocks
+        self.cache.size_filesystem(size);
+        
+        // take special blocks (reserved, fs info block, root inode)
         self.cache.take_block(0);
         self.cache.take_block(1);
+        self.cache.take_block(2);
         
         let root = EntryBlock::new("Root", ino_root, FileType::Directory, false);
 
@@ -57,8 +94,34 @@ impl PathTagFs {
 
         self.mkdir(ino_root, &"Pathes".to_string());
         self.mkdir(ino_root, &"Tags".to_string());
+        
+        // persist data
+        self.cache.flush();
+        
+        self.list_fs(ino_root);
     }
 
+
+    // list file system structure for debugging
+    fn list_fs(&mut self, ino: u64) {
+       
+        let mut subdirs = Vec::new();
+        let children = self.list_children(ino);
+        
+        println!("Inode {}", ino);
+        
+        for child in children {
+            println!("  child ino={} type={:?} name={}", child.0, child.1, child.2);
+            if child.1 == FileType::Directory && child.2.starts_with(".") ==false {
+                subdirs.push(child.0);
+            }            
+        }
+        
+        for subdir in subdirs {
+            self.list_fs(subdir);
+        }
+    }
+    
 
     pub fn retrieve_entry_block(&mut self, bno: u64) -> Option<&mut EntryBlock> {
         self.cache.retrieve_entry_block(bno)
@@ -67,25 +130,26 @@ impl PathTagFs {
     
     pub fn find_child(&mut self, parent_ino: u64, name: &String) -> Option<u64> {
 
-        println!("find_child() finding {} from indode {}", name, parent_ino);                
+        println!("find_child()  finding {} from inode {}", name, parent_ino);                
 
         let eb_opt = self.cache.retrieve_entry_block(parent_ino);
 
         match eb_opt {
             None => {
-                println!("  error:  {} is no entry block", parent_ino);                
+                println!("  find_child(): error:  {} is no entry block", parent_ino);                
             }
             Some(eb) => {
                 let mut next = eb.more_data;
 
-                println!("  next directory block is {}", next);                
+                println!("  find_child(): next directory block is {}", next);                
 
                 while next != 0 {
                     let option = self.cache.retrieve_directory_block(next);
                     let db = option.unwrap();
-                
                     for entry in &db.entries {
-                        if *name == entry.name {
+                        
+                        // println!("  find_child(): comparing search='{}' entry='{}'", name, entry.name);                
+                        if comp(name, &entry.name) {
                             return Option::Some(entry.ino);   
                         }
                     }
@@ -102,7 +166,7 @@ impl PathTagFs {
     pub fn list_children_names(&mut self, parent_ino: u64) -> Vec<(u64, String)> {
         let mut result = Vec::new();
 
-        println!("list_children() listing from inode {}", parent_ino);                
+        println!("list_children_names()  listing from inode {}", parent_ino);                
 
         let eb_opt = self.cache.retrieve_entry_block(parent_ino);
 
@@ -127,8 +191,9 @@ impl PathTagFs {
                                 let name = entry.name.to_string();
                                 let ino = entry.ino;
                                 result.push((ino, name));                
-                                next = db.next;
                             }
+                            next = db.next;
+                            println!("  next directory block is {}", next);                
                         }
                     }
                 }
@@ -292,8 +357,9 @@ impl PathTagFs {
                 let bno = self.cache.allocate_block() as u64;
                 self.add_directory_entry(parent_ino, &name.to_string(), bno);
                 
-                let entry = EntryBlock::new(&name, bno, kind, false);
+                let mut entry = EntryBlock::new(&name, bno, kind, false);
                 let attr: FileAttr = entry.attr.into();
+                
                 self.cache.write_block(AnyBlock::EntryBlock(entry), bno);
                 
                 return Some(attr);
@@ -368,7 +434,7 @@ impl PathTagFs {
     
     pub fn store_directory_entry(&mut self, parent_ino: u64, name: &String, ino: u64) -> u64 {
 
-        println!("store_directory_entry()  Trying to store new directory entry {} in inode {} from parent inode {}", name, ino, parent_ino);
+        println!("store_directory_entry()  Trying to store new directory entry {} (inode {}) in inode {} directory", name, ino, parent_ino);
         let mut result = 0;
         let parent_opt = self.cache.retrieve_entry_block(parent_ino);
 
@@ -410,7 +476,7 @@ impl PathTagFs {
 
 
     pub fn add_directory_entry(&mut self, parent_ino: u64, name: &String, ino: u64) {
-        println!("store_directory_entry()  Add new directory entry {} in inode {} from parent inode {}", name, ino, parent_ino);
+        println!("add_directory_entry()  Add new directory entry {} (inode {}) in inode {} directory", name, ino, parent_ino);
         
         // try to store the new entry in one of the existing directrory blocks of this inode 
         let tail = self.store_directory_entry(parent_ino, name, ino);

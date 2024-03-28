@@ -4,6 +4,8 @@
 
 use std::collections::HashMap;
 use std::io::Error;
+use libc::SIG_BLOCK;
+
 use crate::{block_io::BlockIo, path_tag_fs::BLOCK_SIZE, nodes::{AnyBlock, DataBlock, DirectoryBlock, EntryBlock, IndexBlock}};
 
 
@@ -47,13 +49,73 @@ impl BlockCache {
             storage: BlockIo::new(backingstore),
         };
         
-        cache.bitmap.push(DataBlock::new());    
-        cache.bitmap.push(DataBlock::new());    
-        cache.bitmap.push(DataBlock::new());    
-        cache.bitmap.push(DataBlock::new());    
         
         cache
     }
+    
+    
+    pub fn open(&mut self) {
+
+        // get fsinfo block
+        let fsinfo = self.storage.read_data_block(2);
+        let bm_size = fsinfo.data[4] as u64;
+        
+        println!("open()  reading {} bitmap blocks", bm_size);
+        
+        for i in 0..bm_size {
+            let bmblock = self.storage.read_data_block(3+i);
+            self.bitmap.push(bmblock);
+        }
+    }
+        
+
+    pub fn flush(&mut self) {
+        println!("flush()");
+        
+        println!("  writing fsinfo block");
+        let mut fsinfo = DataBlock::new();
+        fsinfo.data[4] = self.bitmap.len() as u8;
+        self.storage.write_data_block(&fsinfo, 2);
+
+        println!("  writing {} bitmap blocks", self.bitmap.len());
+        for i in 0..self.bitmap.len() {
+            let bmblock = &self.bitmap[i as usize];
+            self.storage.write_data_block(bmblock, 3+i as u64);
+        }
+        
+        println!("  writing {} cached blocks", self.blocks.len());
+        let keys = self.blocks.keys();
+        for key in keys {
+            let v = self.blocks.get(key).unwrap();
+            self.storage.write_block(v, *key);        
+        }
+        
+        self.storage.flush();
+    }
+
+    
+    pub fn size_filesystem(&mut self, size: u64) {
+        println!("size_filesystem()  writing {} blocks", size);
+
+        let db = DataBlock::new();
+        for i in 0..size {
+            self.storage.write_data_block(&db, i);
+        }
+
+        let bm_size = size / BLOCK_SIZE as u64 / 8 + 1;
+        for i in 0..bm_size {
+            self.bitmap.push(DataBlock::new());
+        }
+        
+        // mark bitmap blocks as taken
+        // block 0 is reserved, block 1 is root inode
+        for i in 0..bm_size {
+            self.take_block((3 + i) as usize);
+        }
+
+        self.flush();        
+    }
+    
 
     fn calculate_bit_addr(bit_no: usize) -> (usize, usize, usize) {
         let bm_block = bit_no / (BLOCK_SIZE * 8);
@@ -154,7 +216,7 @@ impl BlockCache {
             let ab_opt = self.blocks.get_mut(&bno);
             
             match ab_opt {
-                None => {}
+                None => {panic!("No entry block");}
                 Some(ab) => {
                     if let AnyBlock::EntryBlock(eb) = ab {
                         result = Some(eb);
@@ -183,15 +245,20 @@ impl BlockCache {
             let ab_opt = self.blocks.get_mut(&bno);
             
             match ab_opt {
-                None => {}
+                None => {panic!("No directory block");}
                 Some(ab) => {
                     if let AnyBlock::DirectoryBlock(eb) = ab {
                         result = Some(eb);
+                    } 
+                    else {
+//                        panic!("{} is no directory block", bno);
                     }
                 }
             }
         }
         else {
+            println!("  disk read, caching");                
+
             let db = self.storage.read_directory_block(bno);
             self.blocks.insert(bno, AnyBlock::DirectoryBlock(db));
 
@@ -232,7 +299,7 @@ impl BlockCache {
 
 
     pub fn retrieve_data_block(&mut self, bno: u64) -> Option<&mut DataBlock> {
-        println!("retrieve_index_block() block={}", bno);                
+        println!("retrieve_data_block() block={}", bno);                
         
         let in_cache = self.check_cache(bno);
         let mut result = None;

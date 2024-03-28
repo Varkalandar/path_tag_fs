@@ -61,8 +61,8 @@ struct PathTagFsFuse {
 
 impl PathTagFsFuse {
 
-	fn new() -> PathTagFsFuse {
-        let fs = PathTagFs::new("/tmp/ptfs_storage");
+	fn new(device: &str) -> PathTagFsFuse {
+        let fs = PathTagFs::new(device);
 
 		PathTagFsFuse {
             _reserved: 0,
@@ -73,8 +73,13 @@ impl PathTagFsFuse {
 	}
 	
 	
-	fn initialize(& mut self) {
-        self.fs.initialize(INO_ROOT);
+	fn open(&mut self) {
+        self.fs.open(INO_ROOT);
+    }
+	
+	
+	fn mkfs(& mut self, size: u64) {
+        self.fs.mkfs(INO_ROOT, size);
 	}
 	
 	
@@ -98,7 +103,7 @@ impl Filesystem for PathTagFsFuse {
     /// Clean up filesystem.
     /// Called on filesystem exit.
     fn destroy(&mut self) {
-        
+        self.fs.destroy();
     }
 
 
@@ -110,9 +115,13 @@ impl Filesystem for PathTagFsFuse {
 		
         let ino: Option<u64> = self.fs.find_child(parent_ino, &fname); 
 		match ino {
-			None => reply.error(ENOENT),
+            None => {
+                println!("  no entry found");
+                reply.error(ENOENT)
+            }
 			Some(ino) => {
 				let node = self.fs.retrieve_entry_block(ino).unwrap();
+                println!("  attr={:?}", node.attr);
 				reply.entry(&TTL, &node.attr, 0);
 			}
 		}
@@ -126,8 +135,14 @@ impl Filesystem for PathTagFsFuse {
         let node_opt = self.fs.retrieve_entry_block(ino);
 
         match node_opt {
-            Some(node) => reply.attr(&TTL, &node.attr),
-            None => reply.error(ENOENT),
+            None => {
+                println!("  no entry found");
+                reply.error(ENOENT)
+            }
+            Some(node) => {
+                println!("  attr={:?}", node.attr);
+                reply.attr(&TTL, &node.attr)
+            }
         }
     }
 
@@ -955,7 +970,7 @@ fn main() {
         .author("H. Malthaner")
         .arg(
             Arg::new("MOUNT_POINT")
-                .required(true)
+                .required_unless_present("mkfs")
                 .index(1)
                 .help("Act as a client, and mount FUSE at given path"),
         )
@@ -971,11 +986,29 @@ fn main() {
                 .action(ArgAction::SetTrue)
                 .help("Allow root user to access filesystem"),
         )
+        .arg(
+            Arg::new("device")
+                .short('d')
+                .long("device")
+                .value_name("FILE")
+                .num_args(1)
+                .required(true)
+                .action(ArgAction::Append)
+                .help("The device or file to use for data storage"),
+        )
+        .arg(
+            Arg::new("mkfs")
+                .short('m')
+                .long("mkfs")
+                .value_name("SIZE")
+                .num_args(1)
+                .action(ArgAction::Append)
+                .help("Create a new file system in the data storage with SIZE blocks"),
+        )
         .get_matches();
         
     env_logger::init();
     
-    let mountpoint = matches.get_one::<String>("MOUNT_POINT").unwrap();
     // let mut options = vec![MountOption::RO, MountOption::FSName("path_tag_fs".to_string())];
     let mut options = vec![MountOption::RW, MountOption::FSName("path_tag_fs".to_string())];
     
@@ -987,7 +1020,20 @@ fn main() {
         options.push(MountOption::AllowRoot);
     }
     
-    let mut file_system = PathTagFsFuse::new();     
-    file_system.initialize();
-    fuser::mount2(file_system, mountpoint, &options).unwrap();
+    let device = matches.get_one::<String>("device").unwrap();
+    
+    let mut file_system = PathTagFsFuse::new(device);     
+
+    if matches.get_one::<String>("mkfs") != None {
+        let size_string = matches.get_one::<String>("mkfs").unwrap();
+        let size = size_string.parse::<u64>().unwrap();
+
+        file_system.mkfs(size);
+    }
+    else {
+        let mountpoint = matches.get_one::<String>("MOUNT_POINT").unwrap();
+        file_system.open();
+        fuser::mount2(file_system, mountpoint, &options).unwrap();
+    }
+
 }

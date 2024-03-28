@@ -1,7 +1,7 @@
 use std::{fs::{remove_file, File}, io::{Error, ErrorKind, Read, Seek, Write}, time::{Duration, SystemTime, UNIX_EPOCH}};
 use fuser::FileType;
 
-use crate::{path_tag_fs::BLOCK_SIZE, nodes::{AnyBlock, DataBlock, DirectoryBlock, EntryBlock, IndexBlock, ENTRY_SIZE}};
+use crate::{nodes::{AnyBlock, DataBlock, DirectoryBlock, DirectoryEntry, EntryBlock, IndexBlock, ENTRY_SIZE}, path_tag_fs::BLOCK_SIZE};
 
 #[cfg(test)]
 mod tests {
@@ -197,12 +197,6 @@ impl BlockIo {
 
     pub fn new(path: &str) -> BlockIo {
         
-        // later we must split file system creation from opening.
-        // currently the initialize() method clashes with old data
-        let r = remove_file(path);
-        
-        println!("Removing old storage, status: {:?}", r);
-        
         let file = File::options().read(true).write(true).create(true).open(path);
 
         BlockIo {
@@ -210,6 +204,11 @@ impl BlockIo {
         }
     }
 
+
+    pub fn flush(&mut self) {
+        self.file.flush();
+    }
+    
     
     pub fn write_block(&mut self, ab: &AnyBlock, no: u64) -> Result<usize, Error> {
         let size;
@@ -261,7 +260,11 @@ impl BlockIo {
         data[92] = kind_to_u8(attrs.kind);
         data[93] = if b.is_tag {1} else {0};
         
+        store(b.more_data, &mut data[96..104]);
+        
         let result = self.file.write(&data);
+        println!("write_entry_block()  block={} -> {:?} bytes written", no, result);
+
         result
     }
 
@@ -280,7 +283,7 @@ impl BlockIo {
         store(b.next, &mut data[i*8 .. (i+1)*8]);
 
         let result = self.file.write(&data);
-        println!("write_data_block() {:?} bytes written", result);
+        println!("write_index_block()  block={} -> {:?} bytes written", no, result);
 
         return result;
     }
@@ -308,18 +311,18 @@ impl BlockIo {
         store(b.next, &mut data[BLOCK_SIZE-8..BLOCK_SIZE]);
 
         let result = self.file.write(&data);
-        println!("write_directory_block() {:?} bytes written", result);
+        println!("write_directory_block() block={} -> {:?} bytes written", no, result);
 
         return result;
     }
 
 
-    fn write_data_block(&mut self, b: &DataBlock, no: u64) -> Result<usize, Error> {
+    pub fn write_data_block(&mut self, b: &DataBlock, no: u64) -> Result<usize, Error> {
         let seek = std::io::SeekFrom::Start(no  * BLOCK_SIZE as u64);
         self.file.seek(seek).unwrap();
 
         let size = self.file.write(&b.data);
-        println!("write_data_block() {:?} bytes written", size);
+        // println!("write_data_block() {:?} bytes written", size);
         return size;
     }
 
@@ -355,6 +358,9 @@ impl BlockIo {
         attrs.kind = u8_to_kind(data[92]);
 
         b.is_tag = data[93] == 1;
+        
+        b.more_data = to_u64(&data[96..104]);
+        
         b        
     }
 
@@ -391,14 +397,30 @@ impl BlockIo {
         let mut data: [u8; BLOCK_SIZE] = [0; BLOCK_SIZE];
         let _ = self.file.read(&mut data);        
         let mut pos = 0;
-        
-        for entry in &mut db.entries {
 
-            entry.ino = to_u64(&data[pos..pos+8]);
-    
-            let vec = Vec::from(&data[pos+8..pos+ENTRY_SIZE]);
-            entry.name = String::from_utf8(vec).unwrap();
+        let mut ino = 1;
+        let mut i = 0;        
+        while ino != 0 {
             
+            // scan for string end
+            let mut end = pos + 8;
+            while data[end] != 0 {
+                end += 1;
+            }
+
+            let vec = Vec::from(&data[pos+8..end]);
+
+            let mut entry = DirectoryEntry { 
+                ino: to_u64(&data[pos..pos+8]),
+                name: String::from_utf8(vec).unwrap(),
+            };
+
+            ino = entry.ino;
+            if ino > 0 {
+                db.entries.push(entry);
+            }
+                       
+            i += 1;
             pos += ENTRY_SIZE;
         }
 
