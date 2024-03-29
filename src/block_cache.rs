@@ -4,9 +4,10 @@
 
 use std::collections::HashMap;
 use std::io::Error;
-use libc::SIG_BLOCK;
 
 use crate::{block_io::BlockIo, path_tag_fs::BLOCK_SIZE, nodes::{AnyBlock, DataBlock, DirectoryBlock, EntryBlock, IndexBlock}};
+
+const FSINFO_BLOCK:u64 = 2;
 
 
 #[cfg(test)]
@@ -43,7 +44,7 @@ impl BlockCache {
 
 
     pub fn new(backingstore: &str) -> BlockCache {
-        let mut cache = BlockCache {
+        let cache = BlockCache {
             bitmap: Vec::new(),
             blocks: HashMap::new(),
             storage: BlockIo::new(backingstore),
@@ -57,7 +58,7 @@ impl BlockCache {
     pub fn open(&mut self) {
 
         // get fsinfo block
-        let fsinfo = self.storage.read_data_block(2);
+        let fsinfo = self.storage.read_data_block(FSINFO_BLOCK);
         let bm_size = fsinfo.data[4] as u64;
         
         println!("open()  reading {} bitmap blocks", bm_size);
@@ -75,19 +76,19 @@ impl BlockCache {
         println!("  writing fsinfo block");
         let mut fsinfo = DataBlock::new();
         fsinfo.data[4] = self.bitmap.len() as u8;
-        self.storage.write_data_block(&fsinfo, 2);
+        self.storage.write_data_block(&fsinfo, FSINFO_BLOCK).unwrap();
 
         println!("  writing {} bitmap blocks", self.bitmap.len());
         for i in 0..self.bitmap.len() {
             let bmblock = &self.bitmap[i as usize];
-            self.storage.write_data_block(bmblock, 3+i as u64);
+            self.storage.write_data_block(bmblock, 3+i as u64).unwrap();
         }
         
         println!("  writing {} cached blocks", self.blocks.len());
         let keys = self.blocks.keys();
         for key in keys {
             let v = self.blocks.get(key).unwrap();
-            self.storage.write_block(v, *key);        
+            self.storage.write_block(v, *key).unwrap();        
         }
         
         self.storage.flush();
@@ -99,11 +100,12 @@ impl BlockCache {
 
         let db = DataBlock::new();
         for i in 0..size {
-            self.storage.write_data_block(&db, i);
+            self.storage.write_data_block(&db, i).unwrap();
         }
 
-        let bm_size = size / BLOCK_SIZE as u64 / 8 + 1;
-        for i in 0..bm_size {
+        let bites_per_block = BLOCK_SIZE as u64 * 8;
+        let bm_size = size / bites_per_block + 1;
+        for _i in 0..bm_size {
             self.bitmap.push(DataBlock::new());
         }
         

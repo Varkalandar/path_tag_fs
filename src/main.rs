@@ -4,7 +4,6 @@ mod block_cache;
 mod block_io;
 
 use path_tag_fs::PathTagFs;
-use nodes::{AnyBlock, EntryBlock};
 use clap::{Arg, ArgAction, Command};
 use fuser::{
     FileType, Filesystem, KernelConfig, MountOption, ReplyAttr, ReplyBmap, ReplyCreate, ReplyData, ReplyDirectory, ReplyDirectoryPlus, ReplyEmpty, ReplyEntry, ReplyIoctl, ReplyLock, ReplyLseek, ReplyOpen, ReplyStatfs, ReplyWrite, ReplyXattr, Request, TimeOrNow
@@ -121,7 +120,7 @@ impl Filesystem for PathTagFsFuse {
             }
 			Some(ino) => {
 				let node = self.fs.retrieve_entry_block(ino).unwrap();
-                println!("  attr={:?}", node.attr);
+                // println!("  attr={:?}", node.attr);
 				reply.entry(&TTL, &node.attr, 0);
 			}
 		}
@@ -176,17 +175,30 @@ impl Filesystem for PathTagFsFuse {
         
         match node_opt {
             None => {
-                
+                println!("  setattr(): error: {} is not an entry block", ino);
             }
             Some(node) => {
                 let attrs = &mut node.attr;
                 let time = &SystemTime::now();
 
                 if let Some(size) = size {
-                    println!("  setting new size={}", size);
+                    println!("  setattr():setting new size {}", size);
                     attrs.size = size;                    
                     attrs.mtime = *time;
                 }
+
+                if let Some(uid) = uid {
+                    println!("  setattr():setting new uid {}", uid);
+                    attrs.uid = uid;                    
+                    attrs.mtime = *time;                    
+                }
+
+                if let Some(gid) = gid {
+                    println!("  setattr():setting new gid {}", gid);
+                    attrs.gid = gid;                    
+                    attrs.mtime = *time;                    
+                }
+
 
                 // self.write_inode(&attrs);
                 reply.attr(&Duration::new(0, 0), &attrs);
@@ -196,7 +208,7 @@ impl Filesystem for PathTagFsFuse {
         
         // reply.error(ENOSYS);
     }
-    
+
    
     /// Create file node.
     /// Create a regular file, character device, block device, fifo or socket node.    

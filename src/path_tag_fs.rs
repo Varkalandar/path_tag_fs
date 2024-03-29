@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use fuser::{FileAttr, FileType};
 
 use crate::nodes::{AnyBlock, DataBlock, DirectoryBlock, DirectoryEntry, EntryBlock, IndexBlock, MAX_ENTRIES};
@@ -90,7 +89,7 @@ impl PathTagFs {
         
         let root = EntryBlock::new("Root", ino_root, FileType::Directory, false);
 
-        self.cache.write_block(AnyBlock::EntryBlock(root), ino_root);
+        self.cache.write_block(AnyBlock::EntryBlock(root), ino_root).unwrap();
 
         self.mkdir(ino_root, &"Pathes".to_string());
         self.mkdir(ino_root, &"Tags".to_string());
@@ -307,7 +306,7 @@ impl PathTagFs {
             ib.block[i] = list[i];            
         }
 
-        self.cache.write_block(AnyBlock::IndexBlock(ib), ib_no);
+        self.cache.write_block(AnyBlock::IndexBlock(ib), ib_no).unwrap();
         
         let eb_opt = self.cache.retrieve_entry_block(inode);
         let eb = eb_opt.unwrap();
@@ -337,7 +336,7 @@ impl PathTagFs {
             // db.data.copy_from_slice(src)
             db.data[0..data_size].copy_from_slice(&data[data_start..data_start+data_size]);
             result.push(db_no);
-            self.cache.write_block(AnyBlock::DataBlock(db), db_no);
+            self.cache.write_block(AnyBlock::DataBlock(db), db_no).unwrap();
         }        
         
         result
@@ -353,14 +352,14 @@ impl PathTagFs {
             None => {
                 println!("  error: {} is no allocated block.", parent_ino);
             }
-            Some(parent) => {
+            Some(_parent) => {
                 let bno = self.cache.allocate_block() as u64;
                 self.add_directory_entry(parent_ino, &name.to_string(), bno);
                 
-                let mut entry = EntryBlock::new(&name, bno, kind, false);
+                let entry = EntryBlock::new(&name, bno, kind, false);
                 let attr: FileAttr = entry.attr.into();
                 
-                self.cache.write_block(AnyBlock::EntryBlock(entry), bno);
+                self.cache.write_block(AnyBlock::EntryBlock(entry), bno).unwrap();
                 
                 return Some(attr);
             }
@@ -379,13 +378,13 @@ impl PathTagFs {
             None => {
                 println!("  error: {} is no allocated block.", parent_ino);
             }
-            Some(parent) => {
+            Some(_parent) => {
                 let bno = self.cache.allocate_block() as u64;
                 self.add_directory_entry(parent_ino, &name.to_string(), bno);
                 
                 let entry = EntryBlock::new(&name, bno, fuser::FileType::Directory, false);
                 let attr: FileAttr = entry.attr.into();
-                self.cache.write_block(AnyBlock::EntryBlock(entry), bno);
+                self.cache.write_block(AnyBlock::EntryBlock(entry), bno).unwrap();
                 
                 self.add_directory_entry(bno, &".".to_string(), bno);            
                 self.add_directory_entry(bno, &"..".to_string(), parent_ino);            
@@ -407,7 +406,7 @@ impl PathTagFs {
         db.entries.push(DirectoryEntry{ino: ino, name: name.to_string(),});
         
         let ab = AnyBlock::DirectoryBlock(db);
-        self.cache.write_block(ab, bno);
+        self.cache.write_block(ab, bno).unwrap();
 
         // tail can either be an entry block or an directory block
         // directory block is more common so we check that first

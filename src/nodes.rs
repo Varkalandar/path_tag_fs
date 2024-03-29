@@ -1,3 +1,4 @@
+use std::os::unix::fs::MetadataExt;
 use fuser::{FileAttr, FileType};
 use crate::path_tag_fs::BLOCK_SIZE;
 
@@ -57,19 +58,14 @@ pub struct DirectoryBlock {
     pub next: u64,
 }
 
+
 impl DirectoryBlock {
 
     pub fn new() -> DirectoryBlock {
-        let mut result = DirectoryBlock { 
+        let result = DirectoryBlock { 
             entries: Vec::new(),
             next: 0 
         };
-        
-        /*
-        for i in 0..BLOCK_SIZE/256 {
-            result.entries.push( DirectoryEntry {ino: 0, name: "".to_string(),} );
-        }
-        */
         
         result
     }
@@ -95,9 +91,10 @@ pub enum AnyBlock {
     DataBlock(DataBlock),
 }
 
-
 fn make_attr(ino: u64, kind: FileType) -> FileAttr
 {
+    let meta = std::fs::metadata("/proc/self").unwrap();
+
     let perm = if kind == FileType::Directory {0o755} else {0o644};
     let now = std::time::SystemTime::now();
 
@@ -112,8 +109,8 @@ fn make_attr(ino: u64, kind: FileType) -> FileAttr
         kind: kind,
         perm: perm,
         nlink: 2,
-        uid: 501,
-        gid: 100,
+        uid: meta.uid(),
+        gid: meta.gid(),
         rdev: 0,
         flags: 0,
         blksize: BLOCK_SIZE as u32,

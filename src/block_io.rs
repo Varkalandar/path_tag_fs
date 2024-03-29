@@ -1,4 +1,4 @@
-use std::{fs::{remove_file, File}, io::{Error, ErrorKind, Read, Seek, Write}, time::{Duration, SystemTime, UNIX_EPOCH}};
+use std::{fs::File, io::{Error, Read, Seek, Write}, time::{Duration, SystemTime, UNIX_EPOCH}};
 use fuser::FileType;
 
 use crate::{nodes::{AnyBlock, DataBlock, DirectoryBlock, DirectoryEntry, EntryBlock, IndexBlock, ENTRY_SIZE}, path_tag_fs::BLOCK_SIZE};
@@ -206,7 +206,7 @@ impl BlockIo {
 
 
     pub fn flush(&mut self) {
-        self.file.flush();
+        self.file.flush().unwrap();
     }
     
     
@@ -237,7 +237,7 @@ impl BlockIo {
         
         let mut data: [u8; BLOCK_SIZE] = [0; BLOCK_SIZE];
         let mut header = &mut data[0..8];        
-        header.write("PTFEntry".as_bytes());
+        header.write("PTFEntry".as_bytes()).unwrap();
         
         let attrs = &b.attr;
         
@@ -332,7 +332,8 @@ impl BlockIo {
         self.file.seek(seek).unwrap();
         
         let mut data: [u8; BLOCK_SIZE] = [0; BLOCK_SIZE];
-        self.file.read(&mut data);        
+        let size = self.file.read(&mut data).unwrap();        
+        assert!(size == BLOCK_SIZE);
         
         let header = &data[0..8];        
         assert!("PTFEntry".as_bytes() == header);
@@ -399,7 +400,6 @@ impl BlockIo {
         let mut pos = 0;
 
         let mut ino = 1;
-        let mut i = 0;        
         while ino != 0 {
             
             // scan for string end
@@ -410,7 +410,7 @@ impl BlockIo {
 
             let vec = Vec::from(&data[pos+8..end]);
 
-            let mut entry = DirectoryEntry { 
+            let entry = DirectoryEntry { 
                 ino: to_u64(&data[pos..pos+8]),
                 name: String::from_utf8(vec).unwrap(),
             };
@@ -419,8 +419,7 @@ impl BlockIo {
             if ino > 0 {
                 db.entries.push(entry);
             }
-                       
-            i += 1;
+
             pos += ENTRY_SIZE;
         }
 
