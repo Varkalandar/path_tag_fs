@@ -8,6 +8,7 @@ pub const MAX_ENTRIES:usize = BLOCK_SIZE/ENTRY_SIZE;
 pub struct EntryBlock {
     pub name: String,
     pub is_tag: bool,
+    pub is_allocated_tag: bool,
     pub attr: FileAttr,
     
     // - if this is a file, more_data will point to an IndexNode
@@ -21,6 +22,7 @@ impl EntryBlock {
         let node = EntryBlock { 
             name: name.to_string(),
             is_tag: is_tag,
+            is_allocated_tag: false,
             attr: make_attr(ino, kind),
             more_data: 0, 
         };

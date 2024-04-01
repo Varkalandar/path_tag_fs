@@ -231,7 +231,7 @@ impl BlockIo {
     }
     
     
-    fn write_entry_block(&mut self, b: &EntryBlock, no: u64) -> Result<usize, Error> {
+    pub fn write_entry_block(&mut self, b: &EntryBlock, no: u64) -> Result<usize, Error> {
         let seek = std::io::SeekFrom::Start(no  * BLOCK_SIZE as u64);
         self.file.seek(seek).unwrap();
         
@@ -263,7 +263,7 @@ impl BlockIo {
         store(b.more_data, &mut data[96..104]);
         
         let result = self.file.write(&data);
-        println!("write_entry_block()  block={} -> {:?} bytes written", no, result);
+        println!("write_entry_block()  block={} name={} is_tag={} -> {:?} bytes written", no, b.name, b.is_tag, result);
 
         result
     }

@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::io::Error;
 
-use crate::{block_io::BlockIo, path_tag_fs::BLOCK_SIZE, nodes::{AnyBlock, DataBlock, DirectoryBlock, EntryBlock, IndexBlock}};
+use crate::{block_io::BlockIo, nodes::{AnyBlock, DataBlock, DirectoryBlock, EntryBlock, IndexBlock}, path_tag_fs::{BLOCK_SIZE, TAGS}};
 
 const FSINFO_BLOCK:u64 = 2;
 
@@ -32,8 +32,7 @@ mod tests {
 
 pub struct BlockCache {
     pub bitmap: Vec<DataBlock>,
-    
-    // just in memory for now
+    tags: Vec<EntryBlock>,
     blocks: HashMap<u64, AnyBlock>,
     
     storage: BlockIo, 
@@ -46,6 +45,7 @@ impl BlockCache {
     pub fn new(backingstore: &str) -> BlockCache {
         let cache = BlockCache {
             bitmap: Vec::new(),
+            tags: Vec::new(),
             blocks: HashMap::new(),
             storage: BlockIo::new(backingstore),
         };
@@ -60,12 +60,18 @@ impl BlockCache {
         // get fsinfo block
         let fsinfo = self.storage.read_data_block(FSINFO_BLOCK);
         let bm_size = fsinfo.data[4] as u64;
+        let tags = fsinfo.data[5] as u64;
         
-        println!("open()  reading {} bitmap blocks", bm_size);
-        
+        println!("open()  reading {} bitmap blocks", bm_size);        
         for i in 0..bm_size {
             let bmblock = self.storage.read_data_block(3+i);
             self.bitmap.push(bmblock);
+        }
+
+        println!("open()  reading {} tag blocks", tags);        
+        for i in 0..TAGS {
+            let tag_block = self.storage.read_entry_block(3 + bm_size + i);
+            self.tags.push(tag_block);
         }
     }
         
@@ -76,14 +82,22 @@ impl BlockCache {
         println!("  writing fsinfo block");
         let mut fsinfo = DataBlock::new();
         fsinfo.data[4] = self.bitmap.len() as u8;
+        fsinfo.data[5] = self.tags.len() as u8;
         self.storage.write_data_block(&fsinfo, FSINFO_BLOCK).unwrap();
 
-        println!("  writing {} bitmap blocks", self.bitmap.len());
-        for i in 0..self.bitmap.len() {
-            let bmblock = &self.bitmap[i as usize];
+        let bm_size = self.bitmap.len();
+        println!("  writing {} bitmap blocks", bm_size);
+        for i in 0..bm_size {
+            let bmblock = &self.bitmap[i];
             self.storage.write_data_block(bmblock, 3+i as u64).unwrap();
         }
         
+        println!("  writing {} tag blocks", self.tags.len());
+        for i in 0..self.tags.len() {
+            let tag_block = &self.tags[i];
+            self.storage.write_entry_block(tag_block, (3 + bm_size + i) as u64).unwrap();
+        }
+
         println!("  writing {} cached blocks", self.blocks.len());
         let keys = self.blocks.keys();
         for key in keys {
@@ -109,12 +123,21 @@ impl BlockCache {
             self.bitmap.push(DataBlock::new());
         }
         
+        for i in 0..TAGS {
+            self.tags.push(EntryBlock::new("", 3 + bm_size + i, fuser::FileType::Directory, true));
+        }
+
         // mark bitmap blocks as taken
         // block 0 is reserved, block 1 is root inode
         for i in 0..bm_size {
             self.take_block((3 + i) as usize);
         }
 
+        // mark tag blocks as taken
+        // block 0 is reserved, block 1 is root inode
+        for i in 0..TAGS {
+            self.take_block((3 + bm_size + i) as usize);
+        }
         self.flush();        
     }
     
@@ -185,6 +208,19 @@ impl BlockCache {
     }
 
     
+    pub fn allocate_tag(&mut self) -> u64 {
+        let tag_start = 3 + self.bitmap.len() as u64;
+        
+        for i in tag_start..(tag_start + TAGS) {
+            if self.tags[i as usize].is_allocated_tag == false {
+                return i
+            }
+        }
+        
+        0
+    }
+
+
     pub fn write_block(&mut self, ab: AnyBlock, no: u64) -> Result<usize, Error> {
 
         let result = self.storage.write_block(&ab, no);

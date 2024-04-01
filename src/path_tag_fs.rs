@@ -3,6 +3,7 @@ use fuser::{FileAttr, FileType};
 use crate::nodes::{AnyBlock, DataBlock, DirectoryBlock, DirectoryEntry, EntryBlock, IndexBlock, MAX_ENTRIES};
 use crate::block_cache::BlockCache;
 
+pub const TAGS:u64 = 30;
 
 /*
 // debug help
@@ -91,8 +92,15 @@ impl PathTagFs {
 
         self.cache.write_block(AnyBlock::EntryBlock(root), ino_root).unwrap();
 
+        let tags = "Tags".to_string();
+
         self.mkdir(ino_root, &"Pathes".to_string());
-        self.mkdir(ino_root, &"Tags".to_string());
+        self.mkdir(ino_root, &tags);
+
+        // Set up tags as tag root        
+        let tno = self.find_child(ino_root, &tags).unwrap();
+        let tb = self.cache.retrieve_entry_block(tno).unwrap();
+        tb.is_tag = true;
         
         // persist data
         self.cache.flush();
@@ -378,24 +386,52 @@ impl PathTagFs {
             None => {
                 println!("  error: {} is no allocated block.", parent_ino);
             }
-            Some(_parent) => {
-                let bno = self.cache.allocate_block() as u64;
-                self.add_directory_entry(parent_ino, &name.to_string(), bno);
-                
-                let entry = EntryBlock::new(&name, bno, fuser::FileType::Directory, false);
-                let attr: FileAttr = entry.attr.into();
-                self.cache.write_block(AnyBlock::EntryBlock(entry), bno).unwrap();
-                
-                self.add_directory_entry(bno, &".".to_string(), bno);            
-                self.add_directory_entry(bno, &"..".to_string(), parent_ino);            
-                
-                return Some(attr);
+            Some(parent) => {
+                if parent.is_tag {
+                    return self.mktag(parent_ino, name);        
+                } else {
+                    return self.mkdir_aux(parent_ino, name);        
+                }
             }
         }
         
         return None;
     }
     
+
+    fn mkdir_aux(&mut self, parent_ino: u64, name: &String) -> Option<FileAttr> {
+        let bno = self.cache.allocate_block() as u64;
+        self.add_directory_entry(parent_ino, &name.to_string(), bno);
+        
+        let entry = EntryBlock::new(&name, bno, fuser::FileType::Directory, false);
+        let attr: FileAttr = entry.attr.into();
+        self.cache.write_block(AnyBlock::EntryBlock(entry), bno).unwrap();
+        
+        self.add_directory_entry(bno, &".".to_string(), bno);            
+        self.add_directory_entry(bno, &"..".to_string(), parent_ino);            
+        
+        return Some(attr);        
+    }
+        
+    
+    fn mktag(&mut self, parent_ino: u64, name: &String) -> Option<FileAttr> {
+        
+        let tno = self.cache.allocate_tag();
+
+        println!("mktag() parent={} name={}, new tag tno={}", parent_ino, name, tno);
+
+        self.add_directory_entry(parent_ino, &name.to_string(), tno);
+        
+        let entry = self.cache.retrieve_entry_block(tno).unwrap();
+        let attr: FileAttr = entry.attr.into();
+
+        // TODO: Is this needed or even good for tags?        
+        self.add_directory_entry(tno, &".".to_string(), tno);            
+        self.add_directory_entry(tno, &"..".to_string(), parent_ino);            
+        
+        return Some(attr);        
+    }
+        
     
     fn extend_directory_chain(&mut self, tail: u64, name: &String, ino: u64) -> u64 {
 
