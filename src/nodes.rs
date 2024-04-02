@@ -7,8 +7,16 @@ pub const MAX_ENTRIES:usize = BLOCK_SIZE/ENTRY_SIZE;
 
 pub struct EntryBlock {
     pub name: String,
+    
+    // is this a tag? Only valid if this is a directory, too
     pub is_tag: bool,
+    
+    // all tag entries are initially written to disk with false in this.
     pub is_allocated_tag: bool,
+    
+   // the tags which are assigned to this file, only valid for regular files
+   pub assigned_tags: u32,
+    
     pub attr: FileAttr,
     
     // - if this is a file, more_data will point to an IndexNode
@@ -21,8 +29,9 @@ impl EntryBlock {
 
         let node = EntryBlock { 
             name: name.to_string(),
-            is_tag: is_tag,
-            is_allocated_tag: false,
+            is_tag: is_tag,                       
+            is_allocated_tag: false,              
+            assigned_tags: 0,
             attr: make_attr(ino, kind),
             more_data: 0, 
         };

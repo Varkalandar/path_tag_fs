@@ -256,11 +256,13 @@ impl BlockIo {
         store_32(attrs.blksize, &mut data[84..88]);
         store_32(attrs.flags, &mut data[88..92]);
 
+        store_32(b.assigned_tags, &mut data[92..96]);
+
         // single bytes at the end
-        data[92] = kind_to_u8(attrs.kind);
-        data[93] = if b.is_tag {1} else {0};
+        data[96] = kind_to_u8(attrs.kind);
+        data[97] = if b.is_tag {1} else {0};
         
-        store(b.more_data, &mut data[96..104]);
+        store(b.more_data, &mut data[98..106]);
         
         let result = self.file.write(&data);
         println!("write_entry_block()  block={} name={} is_tag={} -> {:?} bytes written", no, b.name, b.is_tag, result);
@@ -358,9 +360,11 @@ impl BlockIo {
         attrs.flags = to_u32(&data[88..92]);
         attrs.kind = u8_to_kind(data[92]);
 
-        b.is_tag = data[93] == 1;
+        b.assigned_tags = to_u32(&data[92..96]);
+
+        b.is_tag = data[97] == 1;
         
-        b.more_data = to_u64(&data[96..104]);
+        b.more_data = to_u64(&data[98..106]);
         
         b        
     }
